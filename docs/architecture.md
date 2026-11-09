@@ -1,7 +1,7 @@
 # DevColleague 架構設計
 
 > 狀態：草案
-> 最後更新：2026-11-04
+> 最後更新：2026-11-09
 > 相關文件：[需求規格](requirements.md)
 
 ## 1. 技術棧
@@ -21,8 +21,8 @@
 │                                                            │
 │  React 前端                                                │
 │   ├─ Dashboard（統一儀表板）                                │
-│   ├─ Chat（AI 對話）                                       │
-│   └─ Settings（連線、Provider 設定）                        │
+│   ├─ Chat（AI 對話、角色派工過程）                          │
+│   └─ Settings（連線、Provider、MCP、角色、Routine 設定）     │
 │          │                                                 │
 │          │ HTTP + SSE（127.0.0.1:<動態 port>，帶 session token）│
 │          ▼                                                 │
@@ -33,12 +33,17 @@
 │   ├─ llm/            LLM Gateway                           │
 │   │    ├─ providers/api/   Claude、OpenAI、Ollama…          │
 │   │    └─ providers/cli/   claude -p 等 CLI 工具             │
-│   ├─ tools/          提供給 LLM 呼叫的工具                    │
+│   ├─ agents/         角色載入、管家派工                       │
+│   ├─ routines/       例行流程定義與執行                       │
+│   ├─ scheduler/      背景排程（主動提醒、Routine）             │
+│   ├─ tools/          提供給 LLM 呼叫的工具（內建 + MCP）       │
+│   │    └─ mcp/       MCP Client 與工具轉接                   │
 │   └─ storage/        SQLite、keyring                        │
 └────────────────────────────────────────────────────────────┘
-          │                         │                 │
-          ▼                         ▼                 ▼
-   ADS/TFS、GitHub API        LLM API 服務       本機 CLI（claude 等）
+       │                  │               │              │
+       ▼                  ▼               ▼              ▼
+ ADS/TFS、GitHub API   LLM API 服務   本機 CLI（claude 等）  MCP Server
+                                                     （Email、行事曆、筆記…）
 ```
 
 ## 3. 行程模型
@@ -85,6 +90,10 @@ class ProviderCapabilities:
     local_workspace: bool
     # 是否支援串流輸出
     streaming: bool
+    # 是否能直接連接 MCP Server（CLI 模式由 CLI 自行連線；API 模式由 DevColleague 轉接）
+    native_mcp: bool
+    # 是否原生支援 subagent，可由 CLI 自行負責角色派工（例如 Claude Code）
+    native_subagents: bool
 
 
 class LLMProvider(Protocol):
@@ -100,6 +109,8 @@ class LLMProvider(Protocol):
 
 - `text_delta`：文字片段
 - `tool_call`／`tool_result`：工具呼叫與結果（用於在 UI 顯示「正在查詢 PR…」）
+- `delegate_start`／`delegate_end`：管家派工給角色的開始與結束（用於在 UI 顯示「已交給 PR 秘書處理…」）
+- `confirm_required`：有副作用的工具需要使用者確認後才繼續執行
 - `done`：完成，附帶 token 用量等資訊
 - `error`：錯誤
 
@@ -155,26 +166,174 @@ ADS/TFS 與 GitHub 的資料轉換為共用模型，上層功能與 UI 不需要
 
 工具只回傳 LLM 需要的欄位，避免浪費 token。
 
-## 6. 資料儲存
+## 6. MCP 整合
+
+ADS/TFS、GitHub 這類核心平台需要統一資料模型與儀表板，仍由 `integrations/` 自行實作；
+其他外部系統（Email、行事曆、筆記軟體等）則透過 MCP Server 接入，不另寫 integration。
+
+### 6.1 MCP Client
+
+- 使用 MCP 官方 Python SDK 實作 Client，支援兩種傳輸方式：
+  - **stdio**：由後端以子行程啟動本機 MCP Server（以參數陣列傳遞，不經過 shell）
+  - **Streamable HTTP**：連接遠端或本機已啟動的 MCP Server
+- 後端啟動時連接所有已啟用的 MCP Server，取得工具清單並註冊到工具註冊表。
+- 工具名稱加上命名空間 `mcp__<server>__<tool>`，避免與內建工具或其他 Server 衝突。
+- MCP 工具與內建工具使用同一個介面，Gateway 的 tool loop 不需要區分來源。
+- Server 斷線時自動重試，並在設定畫面顯示狀態；連不上的 Server 其工具暫時不提供給 LLM。
+- 實際的 SDK 用法與協定細節以實作時 MCP 官方文件為準。
+
+### 6.2 設定格式
+
+設定格式相容常見的 `mcpServers` 寫法，機密值不直接寫在設定中，而是引用 keyring 中的項目：
+
+```json
+{
+  "mcpServers": {
+    "calendar": {
+      "command": "npx",
+      "args": ["-y", "<calendar-mcp-server>"],
+      "env": { "API_TOKEN": "keyring:mcp/calendar/API_TOKEN" }
+    }
+  }
+}
+```
+
+- 啟動 MCP Server 前，後端才從 keyring 讀出機密值，以環境變數傳給子行程。
+- 每個工具可個別啟用／停用。
+
+### 6.3 工具風險分級
+
+| 等級 | 說明 | 預設行為 |
+|---|---|---|
+| 唯讀 | 只查詢資料（例如讀信、查行程） | 直接執行 |
+| 有副作用 | 會修改外部狀態（例如寄信、建立事件、留言） | 送出 `confirm_required`，經使用者確認才執行 |
+
+- 預設等級參考 MCP 工具宣告的 annotations（例如 `readOnlyHint`），沒有宣告的一律視為「有副作用」。
+- 使用者可在設定畫面調整個別工具的等級。
+
+### 6.4 與 CLI 模式的關係
+
+- Provider 宣告 `native_mcp` 時（例如 Claude Code、Codex CLI），由 DevColleague 依同一份設定
+  產生 CLI 需要的 MCP 設定並傳給 CLI，由 CLI 自行連線。
+- 機密值同樣以環境變數傳給 CLI 子行程，不寫入暫存設定檔。
+- 各 CLI 指定 MCP 設定的參數與格式，以實作時各 CLI 的官方文件為準。
+
+## 7. 角色與派工
+
+### 7.1 角色定義
+
+角色以 Markdown 檔定義，放在使用者資料目錄的 `roles/` 下，一個角色一個檔：
+
+```markdown
+---
+id: pr-secretary
+name: PR 秘書
+description: 追蹤待審查與擱置的 PR，產生 PR 摘要與描述
+tools:
+  - search_pull_requests
+  - get_pull_request_diff
+  - mcp__calendar__*
+provider: claude-api      # 選填，未指定時使用預設 Provider
+model: <model-id>          # 選填
+---
+
+你是 PR 秘書，說話簡潔直接……（人設、職責範圍、回覆格式）
+```
+
+- `description` 是管家判斷派工的依據，應簡短明確。
+- `tools` 是白名單，支援 `*` 萬用字元；角色只看得到白名單內的工具。
+- 內文為角色的 system prompt。
+- 安裝時附帶數個內建角色範本，使用者可修改或新增。
+
+### 7.2 管家派工流程（API 模式）
+
+1. 使用者訊息送給管家。管家的 context 只包含各角色的 `id` 與 `description`，以及一個 `delegate_to_role` 工具。
+2. 管家呼叫 `delegate_to_role(role_id, task)`；同一輪可呼叫多次，Gateway 會並行執行。
+3. Gateway 為每個被指派的角色開一個子 session：此時才載入該角色的完整 prompt 與工具白名單，執行該角色自己的 tool loop。
+4. 角色完成後，最終結果以 `tool_result` 回給管家。
+5. 管家彙整所有結果後回覆使用者。
+
+規則：
+
+- **只允許一層派工**：角色拿不到 `delegate_to_role`，不能再派工。角色之間需要轉交時（例如需要另一個角色的資訊），由角色在結果中說明，再由管家決定下一步派給誰。
+- 每次派工有 token 與執行時間上限，超過時中止並回報管家。
+- 子 session 的過程以 `delegate_start`／`delegate_end` 及其中的 `tool_call` 事件送到前端，讓使用者看得到誰在做什麼。
+
+使用者也可以在對話中直接指定角色，此時略過管家，直接以該角色的設定開始對話。
+
+### 7.3 CLI 模式
+
+- Provider 宣告 `native_subagents` 時（例如 Claude Code），DevColleague 把角色定義轉換成該 CLI 的
+  subagent 格式，放在 DevColleague 管理的工作目錄中，由 CLI 自行負責派工。
+- Provider 不支援 subagent 時，該 Provider 只能以「直接指定角色」的方式對話，不提供管家派工。
+- 各 CLI 的 subagent 格式以實作時官方文件為準。
+
+## 8. 例行流程（Routine）
+
+### 8.1 Routine 定義
+
+Routine 同樣以 Markdown 檔定義，放在使用者資料目錄的 `routines/` 下：
+
+```markdown
+---
+id: morning-brief
+name: 晨間簡報
+role: butler               # 執行角色，預設為管家
+schedule: "30 8 * * 1-5"   # cron 格式；省略時只能手動執行
+command: /morning          # 選填，在對話中輸入即可手動觸發
+notify: true               # 完成後是否發送系統通知
+catch_up: true             # App 未執行而錯過時，下次啟動是否補跑一次
+allow_side_effects: []     # 無人值守時允許使用的有副作用工具，預設為空
+---
+
+今天是 {{today}}，上次執行時間是 {{last_run_at}}。
+請彙整：待我審查的 PR、昨晚失敗的建置、今天的行程……
+```
+
+- 範本變數由後端在執行前代入，第一版提供 `{{today}}`、`{{yesterday}}`、`{{last_run_at}}`。
+- F4 的站會報告與週報以內建 Routine 範本提供。
+
+### 8.2 執行流程
+
+1. 排程器到點（或使用者手動觸發）時，代入範本變數，以指定角色開一段新對話並送出。
+2. 執行過程與一般對話相同（可派工、可呼叫工具），結果存成一段對話。
+3. 若 `notify` 為真，發送系統通知；點擊通知開啟該對話，使用者可接續追問。
+4. 執行紀錄（開始／結束時間、成功或失敗、對應對話）寫入 SQLite。
+
+無人值守時沒有人能確認，因此有副作用的工具只有列在 `allow_side_effects` 中的才能執行，
+其餘一律拒絕並在結果中說明。
+
+### 8.3 背景排程器
+
+- `scheduler/` 是與 F9 主動提醒共用的背景排程器，在 App 縮到系統匣時繼續運作。
+- 啟動時比對每個 Routine 的上次執行時間與排程，若有錯過且 `catch_up` 為真，補跑一次（不會補跑多次）。
+- 同一個 Routine 同時只會有一個執行中的實例。
+
+## 9. 資料儲存
 
 | 資料 | 儲存位置 |
 |---|---|
-| Token、API Key | 作業系統憑證儲存區（`keyring`） |
-| 連線設定、Provider 設定 | SQLite |
-| 對話紀錄 | SQLite |
+| Token、API Key、MCP Server 機密值 | 作業系統憑證儲存區（`keyring`） |
+| 連線設定、Provider 設定、MCP Server 設定 | SQLite |
+| 角色、Routine 定義 | 使用者資料目錄下的 `roles/`、`routines/`（Markdown 檔） |
+| 對話紀錄（含 Routine 產生的對話） | SQLite |
+| Routine 執行紀錄 | SQLite |
 | 平台資料快取 | SQLite（附更新時間，背景定期更新） |
 | 個人記憶、知識庫 | SQLite，使用 FTS5 全文搜尋（之後再評估向量搜尋） |
 
 資料庫檔案放在使用者資料目錄（例如 Windows 的 `%APPDATA%\DevColleague\`）。
 
-## 7. 安全性設計
+## 10. 安全性設計
 
 - 機密資料不以明文寫入資料庫、設定檔或 log。
 - 後端只監聽 `127.0.0.1`，並驗證 session token。
-- 呼叫 CLI 時以參數陣列傳遞，不經過 shell 組字串，避免指令注入。
+- 呼叫 CLI 與啟動 MCP Server 時以參數陣列傳遞，不經過 shell 組字串，避免指令注入。
 - 送給外部 LLM 的內容（例如 PR diff、build log）需在 UI 讓使用者知道。
+- MCP Server 是第三方程式，新增時需在 UI 提示使用者確認其來源。
+- 有副作用的工具預設需經使用者確認；無人值守的 Routine 只能使用明確允許的有副作用工具。
+- 角色只能使用工具白名單內的工具。
 
-## 8. 建議的專案結構
+## 11. 建議的專案結構
 
 ```
 DevColleague/
@@ -188,13 +347,18 @@ DevColleague/
 │  │  ├─ services/
 │  │  ├─ integrations/
 │  │  ├─ llm/
+│  │  ├─ agents/
+│  │  ├─ routines/
+│  │  ├─ scheduler/
 │  │  ├─ tools/
+│  │  │  └─ mcp/
 │  │  └─ storage/
+│  ├─ defaults/              # 內建角色與 Routine 範本，首次啟動時複製到使用者資料目錄
 │  └─ tests/
 └─ CLAUDE.md
 ```
 
-## 9. 打包與發佈
+## 12. 打包與發佈
 
 1. 使用 PyInstaller 把後端打包成執行檔。
 2. 將執行檔設定為 Tauri 的 sidecar（`externalBin`）。
