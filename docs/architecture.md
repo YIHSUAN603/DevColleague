@@ -50,14 +50,17 @@
 
 1. 使用者啟動 Tauri App。
 2. Tauri 以 sidecar 方式啟動 Python 後端執行檔，並傳入：
-   - 一個可用的動態 port
-   - 一組隨機產生的 session token
-3. 後端只監聽 `127.0.0.1`，所有請求都必須帶 session token，避免本機其他程式或網頁存取。
-4. 前端透過 Tauri 取得 port 與 token 後，開始呼叫後端。
-5. 關閉視窗時，App 縮到系統匣，後端繼續執行背景工作（例如每 5 分鐘檢查一次主動提醒）。
+   - 一個可用的動態 port（命令列參數 `--port`）
+   - 一組隨機產生的 session token（環境變數 `DEVCOLLEAGUE_SESSION_TOKEN`，不放在命令列，避免被其他行程看見）
+3. 後端只監聽 `127.0.0.1`，所有請求都必須帶 `Authorization: Bearer <session token>`，避免本機其他程式或網頁存取。
+4. 前端透過 Tauri 指令 `backend_info` 取得 port 與 token，輪詢 `/api/health` 直到後端就緒後開始呼叫。
+   SSE 串流以 `fetch` 讀取（`EventSource` 無法帶 Authorization header）。
+5. 關閉視窗時，App 縮到系統匣，後端繼續執行背景工作（例如每 5 分鐘檢查一次主動提醒）。（第三階段實作；目前關閉視窗即結束 App）
 6. 從系統匣選「結束」時，Tauri 負責結束後端子行程。
+7. 後端以 `--exit-on-stdin-eof` 啟動，stdin 接到 Tauri 行程；Tauri 異常結束時 stdin 關閉，後端隨之退出，不會留下孤兒行程。
 
-開發階段可以分開啟動：後端用 `uvicorn` 執行，前端用 Vite dev server，不需要每次都打包。
+開發階段可以分開啟動：後端用 `python -m devcolleague` 執行，前端用 Vite dev server，不需要每次都打包。
+`npm run tauri dev` 時，Tauri 直接以 `backend/.venv` 的 Python 啟動後端；發佈版才使用 PyInstaller 打包的 sidecar。
 
 ## 4. LLM Gateway
 
@@ -116,8 +119,10 @@ class LLMProvider(Protocol):
 
 ### 4.3 API Providers
 
-- 第一版至少支援 Claude（Anthropic API）。
-- 每家各寫一個薄的 adapter（例如 `providers/api/anthropic.py`、`providers/api/openai.py`），
+- 第一版支援 Claude（Anthropic API，使用官方 `anthropic` SDK）與 OpenAI Chat Completions 相容端點
+  （`providers/api/openai_compat.py`，同時涵蓋 OpenAI 與 Ollama 等提供相容端點的本機模型）。
+- Claude 預設模型為 `claude-opus-5-5`；支援的模型會啟用伺服器端 refusal fallback（`fallbacks: "default"`）。
+- 每家各寫一個薄的 adapter（例如 `providers/api/anthropic.py`、`providers/api/openai_compat.py`），
   負責把統一的 `ChatRequest` 轉成該家格式，並把回應轉回 `ChatEvent`。
   不使用 LiteLLM，以便完整運用各家特有功能（例如 Claude 的 prompt caching）。
 - Tool loop 由 Gateway 負責：收到工具呼叫 → 執行 `tools/` 中的工具 → 把結果送回 LLM → 直到完成。
@@ -132,10 +137,15 @@ class LLMProvider(Protocol):
   | Codex CLI | `codex exec --json "<prompt>"` | JSON Lines |
 
 - 每個 CLI 各寫一個 adapter，解析其串流輸出並轉換為統一的 `ChatEvent`。
-- 實際的參數與輸出格式以實作時各 CLI 的官方文件為準。
+- 實際的參數與輸出格式以實作時各 CLI 的官方文件為準。目前實作：
+  - Claude Code：`claude -p --output-format stream-json --verbose --include-partial-messages --allowedTools Read Grep Glob`
+  - Codex CLI：`codex exec --json --skip-git-repo-check -s read-only -`
+- 提示（含攤平後的對話歷史）一律透過 stdin 傳入，不放在命令列參數。
+- 非互動執行時只允許唯讀能力（Claude Code 限定 Read／Grep／Glob；Codex 使用 read-only sandbox），
+  避免 CLI 在無人確認的情況下修改檔案或執行指令。
 - 執行時指定工作目錄（`cwd`），讓 CLI 能讀取對應的本機 Repo。
-- 啟動前偵測 CLI 是否已安裝、是否已登入，並在設定畫面顯示狀態。
-- 需處理逾時與取消（使用者中斷時結束子行程）。
+- 啟動前偵測 CLI 是否已安裝（`--version`）、是否已登入（`claude auth status`、`codex login status`），並在設定畫面顯示狀態。
+- 需處理逾時與取消（使用者中斷時結束子行程），預設逾時 600 秒。
 
 ## 5. 平台整合
 
@@ -159,12 +169,28 @@ ADS/TFS 與 GitHub 的資料轉換為共用模型，上層功能與 UI 不需要
 
 `tools/` 中的工具會呼叫 Integration 層，例如：
 
-- `search_pull_requests`：依條件查詢 PR
-- `get_pull_request_diff`：取得 PR 的變更內容
-- `list_work_items`：查詢 Work Item／Issue
-- `get_build_log`：取得建置 log
+- `search_pull_requests`：依條件查詢 PR（已實作）
+- `list_work_items`：查詢 Work Item／Issue（已實作）
+- `list_builds`：查詢最近的建置結果（已實作）
+- `list_my_commits`：查詢我最近的 commit（已實作）
+- `get_pull_request_diff`：取得 PR 的變更內容（第二階段，配合 F6／F7 實作）
+- `get_build_log`：取得建置 log（第二階段，配合 F8 實作）
 
 工具只回傳 LLM 需要的欄位，避免浪費 token。
+
+### 5.4 平台 API 對應（第一版）
+
+| 查詢 | ADS/TFS（REST API 6.0） | GitHub |
+|---|---|---|
+| 目前使用者 | `_apis/connectionData` | `GET /user` |
+| 我建立／待我審查的 PR | 各專案 `_apis/git/pullrequests`（`creatorId`／`reviewerId`） | Search API `is:pr author:`／`review-requested:` |
+| 指派給我的項目 | WIQL `[System.AssignedTo] = @Me` | Search API `is:issue assignee:` |
+| 建置 | 各專案 `_apis/build/builds` | 各 repo `actions/runs` |
+| 我的 commit | 各 repo `commits?searchCriteria.author=` | Search API `search/commits` |
+
+- ADS/TFS 連線的 `base_url` 為 Collection 網址；可在連線設定中指定要查詢的專案，未指定時查詢全部專案（上限 30 個）。
+- GitHub 連線可指定要查詢建置的 repo，未指定時取最近推送的 5 個 repo。
+- 單一專案無權限時略過；單一連線失敗時在 UI 顯示錯誤，不影響其他連線。
 
 ## 6. MCP 整合
 
@@ -341,8 +367,11 @@ DevColleague/
 ├─ app/                      # Tauri + React 前端
 │  ├─ src/                   # React 原始碼
 │  └─ src-tauri/             # Tauri（Rust）設定與程式
-├─ backend/                  # Python FastAPI 後端
+├─ backend/                  # Python FastAPI 後端（uv 管理相依）
 │  ├─ devcolleague/
+│  │  ├─ __main__.py         # 進入點（sidecar 啟動）
+│  │  ├─ app.py              # FastAPI 應用程式、CORS
+│  │  ├─ container.py        # 組裝各元件
 │  │  ├─ api/
 │  │  ├─ services/
 │  │  ├─ integrations/
@@ -353,13 +382,16 @@ DevColleague/
 │  │  ├─ tools/
 │  │  │  └─ mcp/
 │  │  └─ storage/
-│  ├─ defaults/              # 內建角色與 Routine 範本，首次啟動時複製到使用者資料目錄
+│  ├─ defaults/              # 內建角色與 Routine 範本，首次啟動時複製到使用者資料目錄（第四階段）
+│  ├─ scripts/               # PyInstaller 打包腳本
 │  └─ tests/
 └─ CLAUDE.md
 ```
 
 ## 12. 打包與發佈
 
-1. 使用 PyInstaller 把後端打包成執行檔。
-2. 將執行檔設定為 Tauri 的 sidecar（`externalBin`）。
-3. 使用 Tauri 打包成 Windows 安裝檔。
+1. 使用 PyInstaller 把後端打包成單一執行檔（`backend/scripts/build_sidecar.py`），
+   輸出為 `app/src-tauri/binaries/devcolleague-backend-<target triple>.exe`。
+2. 將執行檔設定為 Tauri 的 sidecar（`externalBin`）。此設定放在 `tauri.release.conf.json`，
+   只在打包時合併，開發與 `cargo check` 不需要先產生 sidecar。
+3. 使用 Tauri 打包成 Windows 安裝檔（`npm run tauri:build`，NSIS）。

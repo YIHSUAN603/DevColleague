@@ -36,7 +36,7 @@ DevColleague 是一套**給開發者個人使用的桌面 AI 助理**，目標�
 
 ## 3. 功能需求
 
-### 第一階段：MVP「我的工作台」
+### 第一階段：MVP「我的工作台」（已實作）
 
 #### F1. 平台連線管理
 - 設定 ADS/TFS 與 GitHub 連線（伺服器網址、Personal Access Token）
@@ -168,3 +168,7 @@ DevColleague 是一套**給開發者個人使用的桌面 AI 助理**，目標�
 | 2026-11-09 | 角色的定義方式 | 以 Markdown 檔（YAML frontmatter + 內文 prompt）定義 | 好編輯、可版控，格式接近 Claude Code subagent，CLI 模式容易轉換 |
 | 2026-11-09 | 管家派工的層數 | 只允許一層：管家派給角色，角色不能再派工；角色之間的轉交一律經過管家 | 避免無限遞迴與 token 失控，流程容易追蹤 |
 | 2026-11-09 | Routine 的排程方式 | 與 F9 主動提醒共用同一個背景排程器 | 同樣依賴系統匣常駐，避免重複實作 |
+| 2026-11-09 | 本機模型的串接方式 | 以 OpenAI Chat Completions 相容 adapter 同時支援 OpenAI 與 Ollama 等本機模型 | 主流本機模型服務都提供相容端點，一個 adapter 即可涵蓋 |
+| 2026-11-09 | CLI 模式的權限 | 非互動執行時只開放唯讀能力（Claude Code 限 Read／Grep／Glob；Codex 使用 read-only sandbox） | 無人可即時確認，避免 CLI 自行修改檔案或執行指令 |
+| 2026-11-09 | session token 傳遞方式 | 以環境變數傳給後端，不放在命令列 | 命令列參數可被本機其他行程讀取 |
+| 2026-11-09 | 工作摘要的資料揭露 | 產生報告前先在 UI 顯示彙整後、將送給 LLM 的資料 | 符合「送給 LLM 的資料需讓使用者知情」 |
