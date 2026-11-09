@@ -10,7 +10,15 @@ DevColleague 是給開發者個人使用的桌面 AI 助理，整合 ADS/TFS 與
 - 需求規格：[docs/requirements.md](docs/requirements.md)
 - 架構設計：[docs/architecture.md](docs/architecture.md)
 
-目前專案處於規劃階段，尚未建立程式碼。
+目前已完成第一階段 MVP（F1–F5），第二階段以後尚未實作。
+
+## 常用指令
+
+- 後端測試：`cd backend && uv run pytest`
+- 前端檢查：`cd app && npm run build && npm run lint`
+- 啟動桌面 App（開發模式）：`cd app && npm run tauri dev`
+- 打包：`cd backend && uv run python scripts/build_sidecar.py`，再 `cd app && npm run tauri:build`
+- 詳細說明見 [README.md](README.md)
 
 ## 技術棧
 
