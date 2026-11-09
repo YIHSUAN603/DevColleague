@@ -131,6 +131,7 @@ textarea { resize: vertical; width: 100%; }
 .tool-call summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .tool-result { max-height: 200px; }
 .composer { display: flex; gap: 8px; align-items: flex-end; padding-top: 8px; }
+.composer button { flex-shrink: 0; white-space: nowrap; }
 
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }

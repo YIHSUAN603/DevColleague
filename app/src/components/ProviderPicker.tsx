@@ -7,15 +7,17 @@ interface Props {
   model: string | null
   onChange: (providerId: string | null, model: string | null) => void
   disabled?: boolean
+  /** 值改變時重新讀取 Provider 清單（例如切回保持掛載的對話頁時） */
+  refreshKey?: unknown
 }
 
 /** 選擇 LLM Provider 與模型；未選擇時使用預設 Provider 與其預設模型 */
-export function ProviderPicker({ providerId, model, onChange, disabled }: Props) {
+export function ProviderPicker({ providerId, model, onChange, disabled, refreshKey }: Props) {
   const [data, setData] = useState<ProvidersResponse | null>(null)
 
   useEffect(() => {
     get<ProvidersResponse>('/providers').then(setData).catch(() => setData(null))
-  }, [])
+  }, [refreshKey])
 
   if (!data) return null
   if (data.providers.length === 0) {

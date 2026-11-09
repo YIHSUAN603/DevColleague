@@ -52,7 +52,7 @@ export default function App() {
       <main className="content">
         {/* 對話頁保持掛載，切換頁面時不中斷進行中的串流 */}
         <div hidden={page !== 'chat'} className="page-fill">
-          <ChatPage />
+          <ChatPage active={page === 'chat'} />
         </div>
         {page === 'dashboard' && <DashboardPage onOpenSettings={() => setPage('settings')} />}
         {page === 'summary' && <SummaryPage />}

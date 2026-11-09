@@ -12,7 +12,7 @@ const TOOL_LABEL: Record<string, string> = {
   list_my_commits: '查詢 commit',
 }
 
-export function ChatPage() {
+export function ChatPage({ active }: { active: boolean }) {
   const [list, setList] = useState<ConversationSummary[]>([])
   const [current, setCurrent] = useState<Conversation | null>(null)
   const [input, setInput] = useState('')
@@ -137,6 +137,7 @@ export function ChatPage() {
             providerId={providerId}
             model={model}
             disabled={streaming}
+            refreshKey={active}
             onChange={(p, m) => {
               setProviderId(p)
               setModel(m)
