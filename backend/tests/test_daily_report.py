@@ -155,7 +155,8 @@ def test_generate_without_activity_or_notes_skips_llm(client: TestClient, contai
     monkeypatch.setattr(container.providers, "build", lambda pid=None: (fake, original_build(pid)[1]))
 
     events = parse_sse(client.post("/api/daily-report/generate", json={"day": DAY.isoformat()}).text)
-    assert [e[0] for e in events] == ["activity", "text_delta", "done"]
+    # 以錯誤事件回報，前端不會把提示文字當成日報告內容儲存
+    assert [e[0] for e in events] == ["activity", "error"]
     assert fake.requests == []
 
 

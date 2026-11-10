@@ -226,7 +226,8 @@ export function DailyReportPage() {
         </details>
       )}
 
-      {(content || running) && (
+      {/* 內容被清空時仍保留編輯區，才能把空白內容存回去 */}
+      {(content || running || dirty || savedAt) && (
         <div className="daily-grid">
           <div className="card">
             <div className="card-title">
@@ -258,7 +259,9 @@ export function DailyReportPage() {
               <h3>預覽</h3>
               <span className="muted small">逐一複製各專案的內容，貼到日報告文件中自己的位置</span>
             </div>
-            {sections.length === 0 && <p className="muted">{activity ? '撰寫中…' : '正在彙整活動資料…'}</p>}
+            {sections.length === 0 && (
+              <p className="muted">{!running ? '（沒有內容）' : activity ? '撰寫中…' : '正在彙整活動資料…'}</p>
+            )}
             {sections.map((s, i) => (
               <SectionPreview key={i} section={s} />
             ))}

@@ -20,6 +20,7 @@ from .models import Build, Commit, PullRequest, WorkItem, WorkItemProgress
 
 API_VERSION = "6.0"
 MAX_PROJECTS = 30
+PROJECT_LIST_LIMIT = 1000
 WORK_ITEM_FIELDS = [
     "System.Id",
     "System.Title",
@@ -261,7 +262,11 @@ class AzureDevOpsIntegration(Integration):
         return result
 
     async def list_projects(self) -> list[str]:
-        return await self._projects()
+        if self.info.scopes:
+            return self.info.scopes
+        # 供使用者挑選對應的專案，不套用查詢時的專案數上限
+        data = await self._request("GET", "_apis/projects", params={"$top": PROJECT_LIST_LIMIT})
+        return [p["name"] for p in data.get("value", [])]
 
     async def list_assigned_work_items(self) -> list[WorkItem]:
         states = ", ".join(_wiql_str(s) for s in CLOSED_STATES)

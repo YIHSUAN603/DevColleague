@@ -216,8 +216,8 @@ class DailyReportService:
         yield ChatEvent("activity", activity)
 
         if not activity["projects"] and not notes:
-            yield ChatEvent.text("這一天沒有找到任何 commit、PR 或 Work Item 活動，也沒有手動補充的內容。")
-            yield ChatEvent("done", {"stop_reason": "end_turn", "usage": {}})
+            # 以錯誤事件回報，避免這段提示被前端當成日報告內容儲存
+            yield ChatEvent.error("這一天沒有找到任何 commit、PR 或 Work Item 活動，也沒有手動補充的內容。")
             return
 
         payload = {k: v for k, v in activity.items() if k != "errors"}
