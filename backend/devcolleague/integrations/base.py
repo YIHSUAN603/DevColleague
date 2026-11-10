@@ -8,7 +8,7 @@ from datetime import datetime
 
 import httpx
 
-from .models import Build, Commit, PullRequest, WorkItem
+from .models import Build, Commit, PullRequest, WorkItem, WorkItemProgress
 
 DEFAULT_TIMEOUT = httpx.Timeout(20.0, connect=10.0)
 
@@ -65,6 +65,18 @@ class Integration(ABC):
     @abstractmethod
     async def list_my_commits(self, since: datetime, until: datetime) -> list[Commit]:
         """區間內我提交的 commit。"""
+
+    async def list_projects(self) -> list[str]:
+        """可查詢的專案名稱（沒有專案概念的平台回傳 repo 名稱）。預設回傳空清單。"""
+        return []
+
+    async def list_work_item_progress(self, work_item_ids: list[str]) -> list[WorkItemProgress]:
+        """依父子階層計算進度。
+
+        傳入的 Work Item 若有子項目，以它本身為計算單位；否則以它的父項目為單位。
+        平台沒有父子階層時回傳空清單（預設）。
+        """
+        return []
 
     async def aclose(self) -> None:  # noqa: B027 - 子類別可覆寫
         pass

@@ -92,6 +92,54 @@ async def test_ado_maps_unified_models(ado: AzureDevOpsIntegration) -> None:
     assert builds[0].url == "https://ads.example.com/build/99"
 
 
+def _wi(wid: int, title: str, state: str, wtype: str, relations: list[tuple[str, int]] | None = None) -> dict:
+    raw: dict = {"id": wid, "fields": {
+        "System.Title": title, "System.State": state, "System.WorkItemType": wtype, "System.TeamProject": "Proj A",
+    }}
+    if relations is not None:
+        raw["relations"] = [
+            {"rel": f"System.LinkTypes.Hierarchy-{kind}", "url": f"https://ads.example.com/_apis/wit/workItems/{target}"}
+            for kind, target in relations
+        ]
+    return raw
+
+
+async def test_ado_work_item_progress_from_hierarchy() -> None:
+    # 100：User Story，子項目 1（完成）、2（進行中）、3（已移除）、4（完成）
+    # 200：沒有父項目也沒有子項目的 Bug
+    items = {
+        1: _wi(1, "切版", "Closed", "Task", [("Reverse", 100)]),
+        2: _wi(2, "串接 API", "Active", "Task", [("Reverse", 100)]),
+        3: _wi(3, "取消的工作", "Removed", "Task", [("Reverse", 100)]),
+        4: _wi(4, "匯出", "Done", "Task", [("Reverse", 100)]),
+        100: _wi(100, "行道樹木查詢", "Active", "User Story",
+                 [("Forward", 1), ("Forward", 2), ("Forward", 3), ("Forward", 4), ("Reverse", 900)]),
+        200: _wi(200, "零星問題", "Active", "Bug", []),
+    }
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.url.path.endswith("/_apis/wit/workitems")
+        ids = [int(i) for i in req.url.params["ids"].split(",")]
+        expand = req.url.params.get("$expand") == "relations"
+        assert expand != ("fields" in req.url.params)  # 兩者不可同時指定
+        return httpx.Response(200, json={"value": [
+            items[i] if expand else {k: v for k, v in items[i].items() if k != "relations"} for i in ids
+        ]})
+
+    info = ConnectionInfo(id="c1", kind="ado", name="ADS", base_url="https://ads.example.com/DefaultCollection")
+    ado = AzureDevOpsIntegration(info, "pat", transport=httpx.MockTransport(handler))
+
+    # 異動了子項目 2 與上層項目 100 本身：兩者都歸到 100，不會再往上找 900
+    progress = await ado.list_work_item_progress(["2", "100", "200"])
+    assert len(progress) == 1
+    p = progress[0]
+    assert p.item.id == "100" and p.item.title == "行道樹木查詢"
+    assert p.child_ids == ["1", "2", "4"]  # 已移除的不列入
+    assert (p.done, p.total, p.percent) == (2, 3, 67)
+
+    assert await ado.list_work_item_progress([]) == []
+
+
 async def test_ado_auth_error_message() -> None:
     info = ConnectionInfo(id="c1", kind="ado", name="ADS", base_url="https://ads.example.com/Col")
     ado = AzureDevOpsIntegration(info, "pat", transport=httpx.MockTransport(lambda r: httpx.Response(401)))

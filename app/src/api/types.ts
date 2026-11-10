@@ -144,6 +144,29 @@ export interface Conversation extends ConversationSummary {
   messages: Message[]
 }
 
+/** 日報告中的專案與其對應的平台專案（ADS 專案名稱或 GitHub repo） */
+export interface ReportProject {
+  name: string
+  source: string
+}
+
+export interface DailyReportSettingsResponse {
+  projects: ReportProject[]
+  default_date: string
+}
+
+export interface DailyReportSources {
+  sources: string[]
+  errors: ConnectionError[]
+}
+
+export interface DailyReport {
+  date: string
+  content: string
+  notes: string
+  updated_at: string | null
+}
+
 export interface StreamEvent {
   type: string
   data: Record<string, unknown>

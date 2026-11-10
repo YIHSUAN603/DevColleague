@@ -13,6 +13,7 @@ from .llm.gateway import Gateway
 from .llm.registry import ProviderService
 from .services.activity import ActivityService
 from .services.conversations import ConversationService
+from .services.daily_report import DailyReportService
 from .services.dashboard import DashboardService
 from .services.summary import SummaryService
 from .storage.db import Database
@@ -34,6 +35,7 @@ class Container:
     dashboard: DashboardService
     conversations: ConversationService
     summary: SummaryService
+    daily_report: DailyReportService
 
 
 def build_container(
@@ -63,4 +65,5 @@ def build_container(
         dashboard=DashboardService(db, activity),
         conversations=ConversationService(db, providers, gateway),
         summary=SummaryService(activity, providers, gateway),
+        daily_report=DailyReportService(db, activity, providers, gateway),
     )

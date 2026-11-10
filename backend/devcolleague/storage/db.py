@@ -63,6 +63,13 @@ CREATE TABLE IF NOT EXISTS cache (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS daily_reports (
+    report_date TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    notes TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
 """
 
 

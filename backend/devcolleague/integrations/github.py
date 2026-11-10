@@ -148,6 +148,9 @@ class GitHubIntegration(Integration):
         data = await self._get("user/repos", {"sort": "pushed", "per_page": AUTO_REPO_COUNT})
         return [r["full_name"] for r in data]
 
+    async def list_projects(self) -> list[str]:
+        return await self._build_repos()
+
     async def list_recent_builds(self, limit: int = 10) -> list[Build]:
         repos = await self._build_repos()
 

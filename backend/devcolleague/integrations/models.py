@@ -41,6 +41,20 @@ class WorkItem(BaseModel):
     updated_at: datetime | None = None
 
 
+class WorkItemProgress(BaseModel):
+    """上層 Work Item（例如 Feature／User Story）依子項目完成狀態計算的進度。"""
+
+    item: WorkItem
+    # 子項目的 id；已移除（Removed）的子項目不列入
+    child_ids: list[str] = []
+    total: int = 0
+    done: int = 0
+
+    @property
+    def percent(self) -> int:
+        return round(self.done * 100 / self.total) if self.total else 0
+
+
 class Build(BaseModel):
     id: str
     platform: Platform

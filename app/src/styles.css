@@ -153,3 +153,14 @@ textarea { resize: vertical; width: 100%; }
 .row-actions { display: flex; gap: 6px; flex-shrink: 0; }
 label.inline { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .disclosure summary { cursor: pointer; }
+
+/* 日報告 */
+.daily-notes { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); margin-top: 12px; }
+.daily-notes textarea { font-size: 14px; }
+.daily-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; align-items: start; }
+.daily-editor { min-height: 480px; font-family: Consolas, 'Cascadia Mono', monospace; font-size: 13px; line-height: 1.5; }
+.daily-section { border-top: 1px solid var(--border); padding: 10px 0; }
+.daily-section .card-title h3 { margin: 0; }
+.mapping-list { display: grid; gap: 8px; margin: 8px 0; }
+.mapping-row { display: flex; gap: 8px; align-items: center; }
+.mapping-row input, .mapping-row select { flex: 1; min-width: 0; }

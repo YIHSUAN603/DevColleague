@@ -1,7 +1,7 @@
 # DevColleague 架構設計
 
 > 狀態：草案
-> 最後更新：2026-11-09
+> 最後更新：2026-11-10
 > 相關文件：[需求規格](requirements.md)
 
 ## 1. 技術棧
@@ -192,6 +192,23 @@ ADS/TFS 與 GitHub 的資料轉換為共用模型，上層功能與 UI 不需要
 - GitHub 連線可指定要查詢建置的 repo，未指定時取最近推送的 5 個 repo。
 - 單一專案無權限時略過；單一連線失敗時在 UI 顯示錯誤，不影響其他連線。
 
+### 5.5 日報告（F15）
+
+`services/daily_report.py` 沿用上述的統一資料模型與 `ActivityService`，流程如下：
+
+1. 依報告日期取得當天的 commit、PR、異動的 Work Item。
+2. 呼叫 Integration 的 `list_work_item_progress`，依父子階層算出上層 Work Item 的進度：
+   異動的項目若有子項目，以它本身為計算單位，否則以它的父項目為單位；
+   進度 = 已完成的子項目數 ÷ 子項目總數，已移除的子項目不列入。
+   平台沒有父子階層時（例如 GitHub Issue）回傳空清單，由上層改用前一份日報告的數字。
+3. 依「日報告專案對應」設定，以項目的平台專案名稱（沒有專案時用 repo 名稱）分組；對應不到的歸在「未分類」。
+4. 連同手動補充內容與最近一份日報告，先以 `activity` 事件送到前端揭露，再交給 LLM 產生 Markdown
+   （每個專案一個標題，底下為巢狀條列）。百分比由後端算好後放在資料中，提示詞要求 LLM 原樣使用。
+5. 前端依標題切成各專案的區塊，可編輯並逐一複製（同時寫入 HTML 與純文字到剪貼簿）。
+
+ADS/TFS 的父子階層以 `_apis/wit/workitems?$expand=relations` 取得，
+連結類型為 `System.LinkTypes.Hierarchy-Reverse`（父）與 `System.LinkTypes.Hierarchy-Forward`（子）。
+
 ## 6. MCP 整合
 
 ADS/TFS、GitHub 這類核心平台需要統一資料模型與儀表板，仍由 `integrations/` 自行實作；
@@ -345,6 +362,7 @@ allow_side_effects: []     # 無人值守時允許使用的有副作用工具，
 | 對話紀錄（含 Routine 產生的對話） | SQLite |
 | Routine 執行紀錄 | SQLite |
 | 平台資料快取 | SQLite（附更新時間，背景定期更新） |
+| 日報告專案對應、每天的日報告內容與手動補充 | SQLite |
 | 個人記憶、知識庫 | SQLite，使用 FTS5 全文搜尋（之後再評估向量搜尋） |
 
 資料庫檔案放在使用者資料目錄（例如 Windows 的 `%APPDATA%\DevColleague\`）。
