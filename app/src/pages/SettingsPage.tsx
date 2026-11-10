@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { del, get, patch, post, put } from '../api/backend'
-import type { Connection, Platform, Provider, ProvidersResponse, ProviderStatus, TestResult } from '../api/types'
+import type {
+  Connection,
+  DailyReportSettingsResponse,
+  DailyReportSources,
+  Platform,
+  Provider,
+  ProvidersResponse,
+  ProviderStatus,
+  ReportProject,
+  TestResult,
+} from '../api/types'
 import { errorMessage } from '../utils'
 
 export function SettingsPage() {
@@ -12,6 +22,7 @@ export function SettingsPage() {
       <p className="muted small">Token 與 API Key 存放於作業系統的憑證儲存區（Windows 認證管理員），不會以明文寫入設定或資料庫。</p>
       <ConnectionsSettings />
       <ProvidersSettings />
+      <DailyReportSettings />
     </div>
   )
 }
@@ -216,6 +227,104 @@ function ConnectionsSettings() {
           </div>
         </div>
       )}
+    </section>
+  )
+}
+
+// ---------------- 日報告專案對應 ----------------
+
+function DailyReportSettings() {
+  const [projects, setProjects] = useState<ReportProject[]>([])
+  const [sources, setSources] = useState<string[]>([])
+  const [dirty, setDirty] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [sourceErrors, setSourceErrors] = useState<string[]>([])
+
+  useEffect(() => {
+    get<DailyReportSettingsResponse>('/daily-report/settings')
+      .then((s) => setProjects(s.projects))
+      .catch((err) => setError(errorMessage(err)))
+    // 平台專案清單需要連線查詢，失敗時仍可沿用已儲存的對應
+    get<DailyReportSources>('/daily-report/sources')
+      .then((s) => {
+        setSources(s.sources)
+        setSourceErrors(s.errors.map((e) => `連線「${e.connection}」：${e.message}`))
+      })
+      .catch((err) => setSourceErrors([errorMessage(err)]))
+  }, [])
+
+  const update = (next: ReportProject[]) => {
+    setProjects(next)
+    setDirty(true)
+  }
+  const change = (index: number, value: Partial<ReportProject>) =>
+    update(projects.map((p, i) => (i === index ? { ...p, ...value } : p)))
+  const move = (index: number, offset: number) => {
+    const next = [...projects]
+    const [item] = next.splice(index, 1)
+    next.splice(index + offset, 0, item)
+    update(next)
+  }
+
+  const save = async () => {
+    setError(null)
+    try {
+      const saved = await put<{ projects: ReportProject[] }>('/daily-report/settings', { projects })
+      setProjects(saved.projects)
+      setDirty(false)
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  return (
+    <section className="card">
+      <div className="card-title">
+        <h3>日報告專案對應</h3>
+        <button className="primary" onClick={() => update([...projects, { name: '', source: '' }])}>
+          ＋ 新增專案
+        </button>
+      </div>
+      <p className="muted small">
+        依日報告文件中的順序列出專案，並選擇各自對應的平台專案（ADS 專案或 GitHub repo）。沒有對應到的活動會歸在「未分類」。
+      </p>
+      {error && <div className="alert error">{error}</div>}
+      {sourceErrors.map((e, i) => (
+        <div key={i} className="alert warn">
+          {e}
+        </div>
+      ))}
+      <div className="mapping-list">
+        {projects.map((p, i) => (
+          <div key={i} className="mapping-row">
+            <input value={p.name} onChange={(e) => change(i, { name: e.target.value })} placeholder="日報告專案名稱，例如：公路局" />
+            <select value={p.source} onChange={(e) => change(i, { source: e.target.value })}>
+              <option value="">（不對應平台專案）</option>
+              {/* 已儲存但目前查不到的對應仍保留在選項中 */}
+              {[...new Set([...sources, p.source].filter(Boolean))].map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <div className="row-actions">
+              <button disabled={i === 0} onClick={() => move(i, -1)} title="上移">
+                ↑
+              </button>
+              <button disabled={i === projects.length - 1} onClick={() => move(i, 1)} title="下移">
+                ↓
+              </button>
+              <button onClick={() => update(projects.filter((_, j) => j !== i))}>移除</button>
+            </div>
+          </div>
+        ))}
+        {projects.length === 0 && <span className="muted">尚未設定專案對應</span>}
+      </div>
+      <div className="form-actions">
+        <button className="primary" disabled={!dirty || projects.some((p) => !p.name.trim())} onClick={() => void save()}>
+          儲存
+        </button>
+      </div>
     </section>
   )
 }

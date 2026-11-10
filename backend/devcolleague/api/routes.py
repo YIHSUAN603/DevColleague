@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,6 +15,7 @@ from ..integrations.base import ConnectionInfo, IntegrationError
 from ..llm.providers.cli.base import CliProvider
 from ..llm.registry import PROVIDER_KINDS
 from ..llm.types import ChatMessage, ChatRequest
+from ..services.daily_report import ReportProject, default_report_date
 from .deps import get_container, sse_response, verify_session_token
 
 router = APIRouter(prefix="/api", dependencies=[Depends(verify_session_token)])
@@ -331,4 +332,63 @@ async def generate_summary(body: SummaryRequest, c: Container = Depends(get_cont
             provider_id=body.provider_id,
             model=body.model,
         )
+    )
+
+
+# ---------- 日報告（F15） ----------
+
+
+class DailyReportSettings(BaseModel):
+    projects: list[ReportProject] = []
+
+
+class DailyReportSave(BaseModel):
+    content: str = ""
+    notes: str = ""
+
+
+class DailyReportRequest(BaseModel):
+    day: date
+    notes: str = ""
+    provider_id: str | None = None
+    model: str | None = None
+
+
+@router.get("/daily-report/settings")
+async def get_daily_report_settings(c: Container = Depends(get_container)) -> dict[str, Any]:
+    return {
+        "projects": [p.model_dump() for p in c.daily_report.projects()],
+        "default_date": default_report_date(datetime.now()).isoformat(),
+    }
+
+
+@router.put("/daily-report/settings")
+async def set_daily_report_settings(body: DailyReportSettings, c: Container = Depends(get_container)) -> dict[str, Any]:
+    try:
+        projects = c.daily_report.set_projects(body.projects)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"projects": [p.model_dump() for p in projects]}
+
+
+@router.get("/daily-report/sources")
+async def list_daily_report_sources(c: Container = Depends(get_container)) -> dict[str, Any]:
+    """可供日報告專案對應的平台專案清單。"""
+    return await c.daily_report.sources()
+
+
+@router.get("/daily-report/reports/{day}")
+async def get_daily_report(day: date, c: Container = Depends(get_container)) -> dict[str, Any]:
+    return c.daily_report.get(day) or {"date": day.isoformat(), "content": "", "notes": "", "updated_at": None}
+
+
+@router.put("/daily-report/reports/{day}")
+async def save_daily_report(day: date, body: DailyReportSave, c: Container = Depends(get_container)) -> dict[str, Any]:
+    return c.daily_report.save(day, body.content, body.notes)
+
+
+@router.post("/daily-report/generate")
+async def generate_daily_report(body: DailyReportRequest, c: Container = Depends(get_container)):
+    return sse_response(
+        c.daily_report.generate(body.day, body.notes, provider_id=body.provider_id, model=body.model)
     )

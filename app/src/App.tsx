@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react'
 import { waitForBackend } from './api/backend'
 import { ChatPage } from './pages/ChatPage'
+import { DailyReportPage } from './pages/DailyReportPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SummaryPage } from './pages/SummaryPage'
 import { errorMessage } from './utils'
 
-type Page = 'dashboard' | 'chat' | 'summary' | 'settings'
+type Page = 'dashboard' | 'chat' | 'summary' | 'daily' | 'settings'
 
 const NAV: { id: Page; label: string; icon: string }[] = [
   { id: 'dashboard', label: '儀表板', icon: '▦' },
   { id: 'chat', label: 'AI 對話', icon: '✦' },
   { id: 'summary', label: '工作摘要', icon: '☰' },
+  { id: 'daily', label: '日報告', icon: '✎' },
   { id: 'settings', label: '設定', icon: '⚙' },
 ]
 
@@ -56,6 +58,7 @@ export default function App() {
         </div>
         {page === 'dashboard' && <DashboardPage onOpenSettings={() => setPage('settings')} />}
         {page === 'summary' && <SummaryPage />}
+        {page === 'daily' && <DailyReportPage />}
         {page === 'settings' && <SettingsPage />}
       </main>
     </div>

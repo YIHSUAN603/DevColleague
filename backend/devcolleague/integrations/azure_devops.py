@@ -16,7 +16,7 @@ from urllib.parse import quote
 import httpx
 
 from .base import DEFAULT_TIMEOUT, Integration, IntegrationError, parse_dt
-from .models import Build, Commit, PullRequest, WorkItem
+from .models import Build, Commit, PullRequest, WorkItem, WorkItemProgress
 
 API_VERSION = "6.0"
 MAX_PROJECTS = 30
@@ -30,10 +30,25 @@ WORK_ITEM_FIELDS = [
     "System.ChangedDate",
 ]
 CLOSED_STATES = ("Closed", "Done", "Removed", "Resolved", "Completed")
+# 計算進度時視為「已完成」的狀態；Removed 的子項目不列入分母
+REMOVED_STATE = "Removed"
+DONE_STATES = tuple(s for s in CLOSED_STATES if s != REMOVED_STATE)
+WORK_ITEM_BATCH = 200
+LINK_PARENT = "System.LinkTypes.Hierarchy-Reverse"
+LINK_CHILD = "System.LinkTypes.Hierarchy-Forward"
 
 
 def _wiql_str(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _related_ids(raw: dict[str, Any], link_type: str) -> list[str]:
+    """從 Work Item 的 relations 取出指定連結類型的對象 id（連結網址結尾為 id）。"""
+    return [
+        rel["url"].rstrip("/").rsplit("/", 1)[-1]
+        for rel in raw.get("relations") or []
+        if rel.get("rel") == link_type and rel.get("url")
+    ]
 
 
 def _strip_ref(ref: str | None) -> str | None:
@@ -179,30 +194,74 @@ class AzureDevOpsIntegration(Integration):
         ids = [str(w["id"]) for w in data.get("workItems", [])][:200]
         if not ids:
             return []
-        detail = await self._request(
-            "GET",
-            "_apis/wit/workitems",
-            params={"ids": ",".join(ids), "fields": ",".join(WORK_ITEM_FIELDS)},
+        return [self._to_work_item(raw) for raw in await self._get_work_items_raw(ids)]
+
+    def _to_work_item(self, raw: dict[str, Any]) -> WorkItem:
+        f = raw.get("fields", {})
+        project = f.get("System.TeamProject")
+        return WorkItem(
+            id=str(raw["id"]),
+            platform="ado",
+            connection_id=self.info.id,
+            title=f.get("System.Title", ""),
+            url=f"{self._web_base}/{quote(project or '')}/_workitems/edit/{raw['id']}",
+            project=project,
+            type=f.get("System.WorkItemType", ""),
+            state=f.get("System.State", ""),
+            assigned_to=_identity_name(f.get("System.AssignedTo")),
+            updated_at=parse_dt(f.get("System.ChangedDate")),
         )
-        items: list[WorkItem] = []
-        for raw in detail.get("value", []):
-            f = raw.get("fields", {})
-            project = f.get("System.TeamProject")
-            items.append(
-                WorkItem(
-                    id=str(raw["id"]),
-                    platform="ado",
-                    connection_id=self.info.id,
-                    title=f.get("System.Title", ""),
-                    url=f"{self._web_base}/{quote(project or '')}/_workitems/edit/{raw['id']}",
-                    project=project,
-                    type=f.get("System.WorkItemType", ""),
-                    state=f.get("System.State", ""),
-                    assigned_to=_identity_name(f.get("System.AssignedTo")),
-                    updated_at=parse_dt(f.get("System.ChangedDate")),
+
+    async def _get_work_items_raw(self, ids: list[str], *, relations: bool = False) -> list[dict[str, Any]]:
+        """批次取得 Work Item。relations 為真時連同父子連結一起取回（API 不允許同時指定 fields）。"""
+        raws: list[dict[str, Any]] = []
+        for start in range(0, len(ids), WORK_ITEM_BATCH):
+            params = {"ids": ",".join(ids[start:start + WORK_ITEM_BATCH]), "errorPolicy": "omit"}
+            if relations:
+                params["$expand"] = "relations"
+            else:
+                params["fields"] = ",".join(WORK_ITEM_FIELDS)
+            detail = await self._request("GET", "_apis/wit/workitems", params=params)
+            # errorPolicy=omit 時，無權限或不存在的項目會以 null 回傳
+            raws.extend(r for r in detail.get("value", []) if r)
+        return raws
+
+    async def list_work_item_progress(self, work_item_ids: list[str]) -> list[WorkItemProgress]:
+        if not work_item_ids:
+            return []
+        units: dict[str, dict[str, Any]] = {}
+        parent_ids: list[str] = []
+        for raw in await self._get_work_items_raw(work_item_ids, relations=True):
+            if _related_ids(raw, LINK_CHILD):
+                units[str(raw["id"])] = raw
+            else:
+                parent_ids.extend(_related_ids(raw, LINK_PARENT)[:1])
+        missing = [p for p in dict.fromkeys(parent_ids) if p not in units]
+        for raw in await self._get_work_items_raw(missing, relations=True):
+            units[str(raw["id"])] = raw
+
+        children = {uid: _related_ids(raw, LINK_CHILD) for uid, raw in units.items()}
+        all_child_ids = list(dict.fromkeys(c for ids in children.values() for c in ids))
+        states = {
+            str(raw["id"]): raw.get("fields", {}).get("System.State", "")
+            for raw in await self._get_work_items_raw(all_child_ids)
+        }
+        result: list[WorkItemProgress] = []
+        for uid, raw in units.items():
+            # 已移除或無法讀取的子項目不列入計算
+            child_ids = [c for c in children[uid] if c in states and states[c] != REMOVED_STATE]
+            result.append(
+                WorkItemProgress(
+                    item=self._to_work_item(raw),
+                    child_ids=child_ids,
+                    total=len(child_ids),
+                    done=sum(1 for c in child_ids if states[c] in DONE_STATES),
                 )
             )
-        return items
+        return result
+
+    async def list_projects(self) -> list[str]:
+        return await self._projects()
 
     async def list_assigned_work_items(self) -> list[WorkItem]:
         states = ", ".join(_wiql_str(s) for s in CLOSED_STATES)

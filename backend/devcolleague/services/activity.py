@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Generic, TypeVar
 
 from ..integrations.base import ConnectionInfo, Integration, IntegrationError
-from ..integrations.models import Build, Commit, PullRequest, WorkItem
+from ..integrations.models import Build, Commit, PullRequest, WorkItem, WorkItemProgress
 from ..integrations.registry import ConnectionService
 
 T = TypeVar("T")
@@ -85,6 +85,21 @@ class ActivityService:
     ) -> AggregateResult[WorkItem]:
         r = await self._gather(connection, lambda i: i.list_work_items_changed(since, until))
         r.items.sort(key=lambda w: _sort_key(w.updated_at), reverse=True)
+        return r
+
+    async def work_item_progress(self, items: list[WorkItem]) -> AggregateResult[WorkItemProgress]:
+        """依父子階層計算這些 Work Item 所屬上層項目的進度；不支援階層的平台不會回傳資料。"""
+        ids: dict[str, list[str]] = {}
+        for item in items:
+            ids.setdefault(item.connection_id, []).append(item.id)
+        if not ids:
+            return AggregateResult()
+        return await self._gather(None, lambda i: i.list_work_item_progress(ids.get(i.info.id, [])))
+
+    async def projects(self) -> AggregateResult[str]:
+        """所有連線可查詢的專案名稱（去除重複）。"""
+        r = await self._gather(None, lambda i: i.list_projects())
+        r.items = list(dict.fromkeys(r.items))
         return r
 
     async def recent_builds(self, connection: str | None = None, limit: int = 10) -> AggregateResult[Build]:

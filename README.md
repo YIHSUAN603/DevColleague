@@ -19,6 +19,12 @@ Your AI colleague for everything you build.
 | F4 工作摘要 | 今日／昨日／本週／自訂區間的站會報告與週報，顯示送給 LLM 的資料，可複製為 Markdown |
 | F5 LLM Provider 設定 | API 模式：Claude、OpenAI 相容端點（含 Ollama 等本機模型）；CLI 模式：Claude Code、Codex CLI |
 
+另外追加：
+
+| 功能 | 說明 |
+|---|---|
+| F15 日報告 | 依日報告專案分組彙整當天活動，進度由 Work Item 父子階層計算，可手動補充、編輯，依專案複製貼到團隊日報告文件 |
+
 ## 開發環境需求
 
 - Python 3.12 以上與 [uv](https://docs.astral.sh/uv/)
