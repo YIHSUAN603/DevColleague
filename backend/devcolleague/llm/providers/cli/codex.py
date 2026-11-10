@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import replace
+import json
 from typing import Any
 
 from ...types import ChatEvent, ChatRequest, ProviderCapabilities
@@ -27,7 +28,12 @@ class CodexProvider(CliProvider):
     )
 
     def build_args(self, exe: str, request: ChatRequest) -> list[str]:
-        args = [exe, "exec", "--json", "--skip-git-repo-check", "-s", "read-only"]
+        args = [exe, "exec", "--json", "--skip-git-repo-check", "-s", "read-only",
+                "--ignore-user-config", "--ignore-rules", "--ephemeral"]
+        args += ["-c", "features.shell_tool=false"]
+        if request.mcp_url:
+            config = '{devcolleague={url=' + json.dumps(request.mcp_url) + ',bearer_token_env_var="DEVCOLLEAGUE_MCP_TOKEN"}}'
+            args += ["-c", "mcp_servers=" + config]
         model = request.model or self._default_model
         if model:
             args += ["-m", model]

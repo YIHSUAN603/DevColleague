@@ -3,6 +3,7 @@ import { del, get, post, stream } from '../api/backend'
 import type { Conversation, ConversationSummary, Message, StoredEvent } from '../api/types'
 import { Markdown } from '../components/Markdown'
 import { ProviderPicker } from '../components/ProviderPicker'
+import { RoutineProposals } from '../components/RoutineProposals'
 import { errorMessage, timeAgo } from '../utils'
 
 const TOOL_LABEL: Record<string, string> = {
@@ -177,6 +178,7 @@ export function ChatPage({ active, openRequest }: { active: boolean; openRequest
             current.messages.map((m) => <MessageView key={m.id} message={m} />)
           )}
           {streaming && <div className="muted small typing">回覆中…</div>}
+          {current && <RoutineProposals key={current.id} conversationId={current.id} isStreaming={streaming} />}
           <div ref={bottomRef} />
         </div>
 

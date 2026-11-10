@@ -6,7 +6,8 @@ base_url：github.com 使用 https://api.github.com；GHES 使用 https://<host>
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -131,6 +132,36 @@ class GitHubIntegration(Integration):
         login = await self._me()
         q = f"is:pr is:open review-requested:{login} archived:false"
         return [self._to_pr(r) for r in await self._search_issues(q)]
+
+    async def list_mentions(self) -> list[WorkItem]:
+        login = await self._me()
+        since = (datetime.now().astimezone() - timedelta(days=30)).date().isoformat()
+        pattern = re.compile(r"(?<![\w-])@" + re.escape(login) + r"(?![\w-])", re.IGNORECASE)
+        result = []
+        for raw in await self._search_issues(f"mentions:{login} updated:>={since}"):
+            item = self._to_work_item(raw)
+            if pattern.search(raw.get("body") or ""):
+                result.append(item.model_copy(update={"id": f"{item.id}:body", "updated_at": parse_dt(raw.get("created_at"))}))
+            paths = [f"repos/{item.repo}/issues/{raw['number']}/comments"]
+            if "pull_request" in raw:
+                paths += [f"repos/{item.repo}/pulls/{raw['number']}/comments", f"repos/{item.repo}/pulls/{raw['number']}/reviews"]
+            for path in paths:
+                result.extend(await self._comment_mentions(item, path, pattern, since))
+        return result
+
+    async def _comment_mentions(self, item: WorkItem, path: str, pattern: re.Pattern, since: str) -> list[WorkItem]:
+        result = []
+        page = 1
+        while True:
+            comments = await self._get(path, {"since": since + "T00:00:00Z", "per_page": 100, "page": page})
+            for comment in comments:
+                stamp = comment.get("updated_at") or comment.get("submitted_at")
+                if pattern.search(comment.get("body") or "") and (not stamp or stamp[:10] >= since):
+                    result.append(item.model_copy(update={"id": f"{item.id}:{path.split('/')[-1]}:{comment['id']}",
+                        "url": comment.get("html_url") or item.url, "updated_at": parse_dt(stamp)}))
+            if len(comments) < 100:
+                return result
+            page += 1
 
     async def list_assigned_work_items(self) -> list[WorkItem]:
         login = await self._me()

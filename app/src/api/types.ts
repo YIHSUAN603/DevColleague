@@ -164,6 +164,7 @@ export interface DailyReport {
   date: string
   content: string
   notes: string
+  status?: 'draft' | 'final'
   updated_at: string | null
 }
 

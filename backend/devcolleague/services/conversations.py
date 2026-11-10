@@ -12,6 +12,7 @@ from ..llm.gateway import Gateway
 from ..llm.registry import ProviderService
 from ..llm.types import ChatEvent, ChatMessage, ChatRequest
 from ..storage.db import Database, utc_now
+from ..tools.context import ExecutionContext, execution_context
 
 TITLE_MAX_CHARS = 30
 
@@ -31,6 +32,8 @@ class ConversationService:
         self._db = db
         self._providers = providers
         self._gateway = gateway
+        self.memory = None
+        self.routines = None
 
     def list(self) -> list[dict[str, Any]]:
         return self._db.fetch_all("SELECT * FROM conversations ORDER BY updated_at DESC")
@@ -90,6 +93,20 @@ class ConversationService:
             yield ChatEvent.error("找不到對話")
             return
 
+        if self.routines and content.strip().startswith("/"):
+            routine = next((r for r in self.routines.store.list() if r.command == content.strip()), None)
+            if routine:
+                try:
+                    run = self.routines.start(routine)
+                    text = f"已啟動「{routine.name}」，執行結果會存為新對話。"
+                    self._append(conversation_id, "user", content, [])
+                    self._append(conversation_id, "assistant", text, [])
+                    yield ChatEvent.text(text)
+                    yield ChatEvent("done", {"conversation_id": run["conversation_id"], "usage": {}})
+                except ValueError as exc:
+                    yield ChatEvent.error(str(exc))
+                return
+
         # 對話中切換 Provider／模型時記住選擇
         provider_id = provider_id or conv["provider_id"]
         model = model if model is not None else conv["model"]
@@ -112,10 +129,13 @@ class ConversationService:
         history.append(ChatMessage(role="user", content=content))
         self._append(conversation_id, "user", content, [])
 
-        request = ChatRequest(messages=history, system=_system_prompt(), model=model or None, cwd=cwd)
+        system = _system_prompt() + (self.memory.context(content) if self.memory else "")
+        system += "\n要改變之後的自動行為時，使用 save_routine 提出完整設定，再請使用者於確認卡片套用。不得宣稱提案已生效。"
+        request = ChatRequest(messages=history, system=system, model=model or None, cwd=cwd)
         text_parts: list[str] = []
         # 保存工具呼叫與錯誤，重新開啟對話時可顯示過程
         saved_events: list[dict[str, Any]] = []
+        token = execution_context.set(ExecutionContext(conversation_id=conversation_id))
         try:
             async for event in self._gateway.run(provider, request):
                 if event.type == "text_delta":
@@ -124,6 +144,7 @@ class ConversationService:
                     saved_events.append({"type": event.type, **event.data})
                 yield event
         finally:
+            execution_context.reset(token)
             # 包含使用者中斷的情況，已產生的部分回覆仍會保存
             text = "".join(text_parts)
             if text or saved_events:

@@ -66,6 +66,10 @@ class Integration(ABC):
     async def list_my_commits(self, since: datetime, until: datetime) -> list[Commit]:
         """區間內我提交的 commit。"""
 
+    async def list_mentions(self) -> list[WorkItem]:
+        """近期提及使用者的項目。"""
+        return []
+
     async def list_projects(self) -> list[str]:
         """可查詢的專案名稱（沒有專案概念的平台回傳 repo 名稱）。預設回傳空清單。"""
         return []

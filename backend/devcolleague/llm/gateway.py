@@ -7,6 +7,8 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 
 from ..tools.base import ToolRegistry
+from ..tools.context import ExecutionContext, execution_context
+from ..tools.mcp_bridge import McpBridge
 from .types import ChatEvent, ChatMessage, ChatRequest, LLMProvider, ToolCall, ToolResult
 
 MAX_TOOL_ROUNDS = 10
@@ -16,8 +18,19 @@ TOOL_RESULT_PREVIEW_CHARS = 1000
 class Gateway:
     def __init__(self, tools: ToolRegistry) -> None:
         self._tools = tools
+        self.mcp: McpBridge | None = None
 
     async def run(self, provider: LLMProvider, request: ChatRequest, *, use_tools: bool = True) -> AsyncIterator[ChatEvent]:
+        if use_tools and not provider.capabilities.custom_tools and provider.capabilities.native_mcp and self.mcp:
+            context = execution_context.get() or ExecutionContext()
+            with self.mcp.grant(context) as (url, token):
+                async for event in self._run(provider, replace(request, mcp_url=url, mcp_token=token), use_tools=use_tools):
+                    yield event
+            return
+        async for event in self._run(provider, request, use_tools=use_tools):
+            yield event
+
+    async def _run(self, provider: LLMProvider, request: ChatRequest, *, use_tools: bool = True) -> AsyncIterator[ChatEvent]:
         """執行一次完整的對話回合，事件會原樣轉給前端（provider_raw 除外）。"""
         caps = provider.capabilities
         if use_tools and caps.custom_tools:

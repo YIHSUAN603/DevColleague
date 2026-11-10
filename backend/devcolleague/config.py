@@ -30,6 +30,7 @@ def default_data_dir() -> Path:
 class Settings:
     session_token: str
     data_dir: Path
+    port: int = 8765
 
     @property
     def db_path(self) -> Path:

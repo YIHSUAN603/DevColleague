@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import shutil
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
@@ -117,6 +118,7 @@ class CliProvider(ABC):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=request.cwd or None,
+                env={**os.environ, **({"DEVCOLLEAGUE_MCP_TOKEN": request.mcp_token} if request.mcp_token else {})},
                 limit=16 * 1024 * 1024,
             )
         except OSError as exc:

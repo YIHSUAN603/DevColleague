@@ -43,8 +43,14 @@ class ClaudeCodeProvider(CliProvider):
             "--output-format", "stream-json",
             "--verbose",
             "--include-partial-messages",
-            "--allowedTools", *READ_ONLY_TOOLS,
+            "--allowedTools", *READ_ONLY_TOOLS, *(["mcp__devcolleague__*"] if request.mcp_url else []),
+            "--tools", ",".join(READ_ONLY_TOOLS),
+            "--strict-mcp-config",
         ]
+        if request.mcp_url:
+            config = {"mcpServers": {"devcolleague": {"type": "http", "url": request.mcp_url,
+                      "headers": {"Authorization": "Bearer ${DEVCOLLEAGUE_MCP_TOKEN}"}}}}
+            args += ["--mcp-config", json.dumps(config)]
         model = request.model or self._default_model
         if model:
             args += ["--model", model]

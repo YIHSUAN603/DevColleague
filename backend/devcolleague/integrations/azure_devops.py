@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
@@ -267,6 +268,80 @@ class AzureDevOpsIntegration(Integration):
         # 供使用者挑選對應的專案，不套用查詢時的專案數上限
         data = await self._request("GET", "_apis/projects", params={"$top": PROJECT_LIST_LIMIT})
         return [p["name"] for p in data.get("value", [])]
+
+    async def list_mentions(self) -> list[WorkItem]:
+        me = await self._get_me()
+        identity = me.get("id")
+        if not identity:
+            return []
+        # @RecentMentions 僅限網頁使用，REST 改為讀取實際留言的 mention targetId。
+        items = await self._query_work_items("[System.ChangedDate] >= @Today - 30")
+
+        async def per_item(item: WorkItem) -> list[WorkItem]:
+            result = []
+            continuation = None
+            while True:
+                params = {"api-version": "6.0-preview.3", "$top": "100", "order": "desc"}
+                if continuation:
+                    params["continuationToken"] = continuation
+                try:
+                    data = await self._request("GET", f"_apis/wit/workItems/{item.id}/comments", params=params)
+                except IntegrationError as exc:
+                    if not any(code in str(exc) for code in ("HTTP 400", "HTTP 404")):
+                        raise
+                    return await self._legacy_work_item_mentions(item, identity)
+                for comment in data.get("comments", []):
+                    if any(m.get("targetId", "").casefold() == identity.casefold() for m in comment.get("mentions", [])):
+                        comment_id = comment.get("id", comment.get("commentId"))
+                        result.append(item.model_copy(update={"id": f"{item.id}:{comment_id}",
+                            "updated_at": parse_dt(comment.get("modifiedDate") or comment.get("createdDate"))}))
+                continuation = data.get("continuationToken")
+                if not continuation:
+                    return result
+
+        groups = await asyncio.gather(*(per_item(item) for item in items))
+        return [mention for group in groups for mention in group] + await self._pr_mentions(identity)
+
+    async def _legacy_work_item_mentions(self, item: WorkItem, identity: str) -> list[WorkItem]:
+        result = []
+        skip = 0
+        while True:
+            data = await self._request("GET", f"_apis/wit/workItems/{item.id}/updates", params={"$top": 200, "$skip": skip})
+            updates = data.get("value", [])
+            for update in updates:
+                history = (update.get("fields", {}).get("System.History") or {}).get("newValue", "")
+                if self._mention_pattern(identity).search(history):
+                    result.append(item.model_copy(update={"id": f"{item.id}:update:{update['id']}",
+                        "updated_at": parse_dt(update.get("revisedDate"))}))
+            if len(updates) < 200:
+                return result
+            skip += 200
+
+    @staticmethod
+    def _mention_pattern(identity: str) -> re.Pattern:
+        return re.compile(r"@<" + re.escape(identity) + r">|data-vss-mention=[\"'][^\"']*" + re.escape(identity), re.IGNORECASE)
+
+    async def _pr_mentions(self, identity: str) -> list[WorkItem]:
+        prs = await self._search_prs({"status": "all"})
+        since = datetime.now().astimezone() - timedelta(days=30)
+        pattern = self._mention_pattern(identity)
+
+        async def per_pr(pr: PullRequest) -> list[WorkItem]:
+            if pr.status != "active" and pr.updated_at and pr.updated_at < since:
+                return []
+            path = f"{quote(pr.project or '')}/_apis/git/repositories/{quote(pr.repo)}/pullRequests/{pr.id}/threads"
+            data = await self._request("GET", path)
+            result = []
+            for thread in data.get("value", []):
+                for comment in thread.get("comments", []):
+                    stamp = parse_dt(comment.get("lastUpdatedDate") or comment.get("publishedDate"))
+                    if not comment.get("isDeleted") and pattern.search(comment.get("content") or "") and (not stamp or stamp >= since):
+                        result.append(WorkItem(id=f"pr:{pr.id}:{thread['id']}:{comment['id']}", platform="ado",
+                            connection_id=self.info.id, title=pr.title, project=pr.project, repo=pr.repo,
+                            url=f"{pr.url}?discussionId={thread['id']}", type="PR mention", state=pr.status, updated_at=stamp))
+            return result
+
+        return [item for group in await asyncio.gather(*(per_pr(pr) for pr in prs)) for item in group]
 
     async def list_assigned_work_items(self) -> list[WorkItem]:
         states = ", ".join(_wiql_str(s) for s in CLOSED_STATES)

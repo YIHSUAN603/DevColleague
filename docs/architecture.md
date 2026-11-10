@@ -301,7 +301,7 @@ ADS/TFS、GitHub 這類核心平台需要統一資料模型與儀表板，仍由
 ### 6.5 把內建工具提供給 CLI（F17）
 
 CLI Provider 的 `custom_tools` 為 False，Gateway 無法替它執行 tool loop，因此 CLI 預設看不到 `tools/` 中的內建工具。
-為了讓 CLI 模式也能執行 Routine 與事件提醒，後端另外扮演 MCP Server 的角色（`tools/mcp_server/`）：
+為了讓 CLI 模式也能執行 Routine 與事件提醒，後端另外扮演 MCP Server 的角色（`tools/mcp_bridge.py`）：
 
 - 以 Streamable HTTP 掛在後端同一個 FastAPI 行程上，只監聽 `127.0.0.1`，並驗證 token。
 - 提供的工具來自同一個工具註冊表，與 API 模式看到的工具一致；工具的風險分級與無人值守的限制同樣適用。
@@ -311,6 +311,20 @@ CLI Provider 的 `custom_tools` 為 False，Gateway 無法替它執行 tool loop
 - 與 6.1 的 MCP Client 方向相反：6.1 是 DevColleague 使用別人的工具，這裡是把自己的工具給 CLI 使用。
 - 各 CLI 指定 MCP Server 與允許工具的參數，以實作時官方文件為準；這是第二階段中不確定性最高的部分，
   動工前需先查證。
+
+目前使用 MCP Python SDK 的無狀態 Streamable HTTP，端點為 `/mcp`，與 FastAPI 共用生命週期。
+Gateway 每次 CLI 執行產生獨立、隨執行結束即撤銷的憑證，綁定該次執行的 `ExecutionContext`；
+MCP 不接受可操作整個 App 的 session token。工具呼叫沿用 API 模式的註冊表、風險檢查與完整結果稽核。
+
+- Claude Code：`--mcp-config` 使用 JSON 設定，標頭以 `${DEVCOLLEAGUE_MCP_TOKEN}` 引用環境變數；
+  `--strict-mcp-config` 排除其他 MCP，`--tools Read,Grep,Glob` 限制內建工具，額外允許 `mcp__devcolleague__*`。
+  參考 [CLI reference](https://code.claude.com/docs/en/cli-reference) 與 [MCP 設定](https://code.claude.com/docs/en/mcp)。
+- Codex：`-c mcp_servers=…` 注入 HTTP 位址與 `bearer_token_env_var`，使用 `read-only` sandbox、
+  `features.shell_tool=false`、`--ignore-user-config`、`--ignore-rules`、`--ephemeral`。
+  參考 [官方設定參考](https://developers.openai.com/codex/config-reference/)；旗標亦以本機 `codex exec --help` 查核。
+- MCP 憑證只經子行程環境變數傳遞，不寫入參數或暫存檔；不會修改使用者的 CLI 全域設定。
+- 自動測試涵蓋協定初始化、工具發現、憑證撤銷與無人值守拒絕規則；真實 Claude Code 的 MCP 端到端實測已通過，
+  Codex CLI 與其他待驗收範圍見 [功能實測紀錄](verification.md)。
 
 ## 7. 角色與派工
 
@@ -439,6 +453,29 @@ Provider：使用 Routine 指定的 Provider，未指定時使用預設 Provider
 
 - 每日喚醒 LLM 的次數設有上限；達到上限後，當天其餘事件改以固定格式的通知顯示，不再呼叫 LLM。
 - 短時間內的多個事件合併成一次喚醒。
+
+### 8.5 第二階段實作細節
+
+- 排程器位於 `services/scheduler.py`，隨 FastAPI lifespan 啟停，每 15 秒比對本機時區的五欄 cron；
+  每個流程的檢查基準存入 SQLite，關閉後重新啟動可補跑一次。使用者儲存新設定時重設基準，不回溯變更前的排程。
+  平台輪詢使用獨立工作（最長 120 秒），不阻塞 cron 比對；無效 Markdown 定義會個別略過並在介面顯示錯誤。
+- `routines/definitions.py` 首次啟動安裝晨間、站會與週報範本到使用者的 `routines/`；預設不啟用自動排程，
+  使用者確認後才開始自動消耗 LLM。事件提醒也需另外啟用。
+- `routines/service.py` 管理背景工作與執行紀錄。執行前保存提示與引用記憶，執行後保存工具輸入、工具結果與事件；
+  結果存為一般對話，保留 Provider 選擇。關閉時取消工作，意外中斷留下的 running 紀錄於下次啟動標示中斷。
+- 每次執行的工具權限以 `ContextVar` 隔離；Routine 管理工具只建立待確認提案。
+  確認 API 由使用者的前端操作呼叫，不提供給 LLM，套用／拒絕也寫入對話紀錄。
+- `services/event_monitor.py` 持久保存平台快照、已通知事件與每日 LLM 使用次數。
+  審查要求先消失、後重新指派時可再次提醒；其他事件依識別字與事件時間去重；連線失敗保留基準。
+- GitHub 提及以 Issue／PR 本文、討論與 review 留言中的實際 `@login` 為準；ADS/TFS 使用 Work Item 留言的 `mentions.targetId`，
+  逐頁讀取 `6.0-preview.3` 留言 API，不使用僅限網頁的 `@RecentMentions`。
+  舊版 TFS 不支援留言 API 時改讀 Work Item updates 中的歷程；PR threads 同時比對 Markdown 與 HTML 的 identity mention。
+  查詢沿用整合層的筆數上限（GitHub 搜尋 50 筆、ADS 最近異動 200 筆），不是事件歷史同步。
+- 參考 [Microsoft 留言 API](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/comments/get-comments?view=azure-devops-rest-6.0)
+  與 [查詢巨集限制](https://learn.microsoft.com/en-us/azure/devops/boards/queries/query-operators-variables)。
+- 日報告新增 `status` 欄位，既有內容遷移為定稿；背景草稿以 `INSERT OR IGNORE` 寫入，保留所有既有內容。
+  前端手動產生的內容先存為草稿，使用者確認後儲存為定稿。
+- 記憶使用 FTS5 trigram，中文長句拆出詞片段；兩字詞以參數化 LIKE 補足。已設定的機密憑證與常見憑證格式拒絕存入記憶。
 
 ## 9. 資料儲存
 

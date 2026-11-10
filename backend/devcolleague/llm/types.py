@@ -68,6 +68,8 @@ class ChatRequest:
     # CLI Provider 執行時的工作目錄
     cwd: str | None = None
     max_tokens: int = 32000
+    mcp_url: str | None = None
+    mcp_token: str | None = None
 
 
 EventType = Literal[

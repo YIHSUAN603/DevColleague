@@ -151,7 +151,7 @@ textarea { resize: vertical; width: 100%; }
 .settings-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .settings-list li:last-child { border-bottom: none; }
 .row-actions { display: flex; gap: 6px; flex-shrink: 0; }
-label.inline { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+label.inline { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; cursor: pointer; }
 .disclosure summary { cursor: pointer; }
 
 /* 日報告 */
@@ -164,3 +164,4 @@ label.inline { display: inline-flex; align-items: center; gap: 6px; cursor: poin
 .mapping-list { display: grid; gap: 8px; margin: 8px 0; }
 .mapping-row { display: flex; gap: 8px; align-items: center; }
 .mapping-row input, .mapping-row select { flex: 1; min-width: 0; }
+.memory-content { white-space: pre-wrap; overflow-wrap: anywhere; }

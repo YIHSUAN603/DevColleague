@@ -81,6 +81,7 @@ export function DailyReportPage() {
   const [content, setContent] = useState('')
   const [savedAt, setSavedAt] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
+  const [status, setStatus] = useState<'draft' | 'final'>('draft')
   const [hasProjects, setHasProjects] = useState(true)
   const [providerId, setProviderId] = useState<string | null>(null)
   const [model, setModel] = useState<string | null>(null)
@@ -109,6 +110,7 @@ export function DailyReportPage() {
         setContent(r.content)
         setNotes(r.notes)
         setSavedAt(r.updated_at)
+        setStatus(r.status ?? 'draft')
         setDirty(false)
       })
       .catch((err) => !cancelled && setError(errorMessage(err)))
@@ -117,9 +119,10 @@ export function DailyReportPage() {
     }
   }, [day])
 
-  const save = async (text: string) => {
-    const saved = await put<DailyReport>(`/daily-report/reports/${day}`, { content: text, notes })
+  const save = async (text: string, reportStatus: 'draft' | 'final' = 'final') => {
+    const saved = await put<DailyReport>(`/daily-report/reports/${day}`, { content: text, notes, status: reportStatus })
     setSavedAt(saved.updated_at)
+    setStatus(saved.status ?? 'final')
     setDirty(false)
   }
 
@@ -149,7 +152,7 @@ export function DailyReportPage() {
         controller.signal,
       )
       // 產生完成後自動儲存，下一次產生時才能延續這份內容
-      if (!failed && full.trim()) await save(full)
+      if (!failed && full.trim()) await save(full, 'draft')
       else setDirty(true)
     } catch (err) {
       if (!controller.signal.aborted) setError(errorMessage(err))
@@ -164,7 +167,7 @@ export function DailyReportPage() {
   return (
     <div className="page">
       <div className="page-header">
-        <h2>日報告</h2>
+        <h2>日報告 <span className="badge">{status === 'draft' ? '草稿' : '定稿'}</span></h2>
       </div>
       {!hasProjects && (
         <div className="alert warn">尚未設定日報告的專案對應，活動會以平台專案名稱（ADS 專案或 GitHub repo）作為標題。請到「設定」新增專案對應。</div>
@@ -237,10 +240,10 @@ export function DailyReportPage() {
                   {running ? '撰寫中…' : dirty ? '尚未儲存' : savedAt ? `已儲存 ${new Date(savedAt).toLocaleString()}` : ''}
                 </span>
                 <button
-                  disabled={running || !dirty}
+                  disabled={running || (!dirty && status === 'final')}
                   onClick={() => void save(content).catch((err) => setError(errorMessage(err)))}
                 >
-                  儲存
+                  儲存為定稿
                 </button>
               </span>
             </div>

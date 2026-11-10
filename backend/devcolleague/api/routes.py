@@ -365,6 +365,7 @@ class DailyReportSettings(BaseModel):
 class DailyReportSave(BaseModel):
     content: str = ""
     notes: str = ""
+    status: Literal["draft", "final"] = "final"
 
 
 class DailyReportRequest(BaseModel):
@@ -404,7 +405,7 @@ async def get_daily_report(day: date, c: Container = Depends(get_container)) -> 
 
 @router.put("/daily-report/reports/{day}")
 async def save_daily_report(day: date, body: DailyReportSave, c: Container = Depends(get_container)) -> dict[str, Any]:
-    return c.daily_report.save(day, body.content, body.notes)
+    return c.daily_report.save(day, body.content, body.notes, body.status)
 
 
 @router.post("/daily-report/generate")

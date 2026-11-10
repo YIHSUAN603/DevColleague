@@ -49,7 +49,7 @@ def main() -> None:
         sys.exit(2)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    settings = Settings(session_token=token, data_dir=default_data_dir())
+    settings = Settings(session_token=token, data_dir=default_data_dir(), port=args.port)
     app = create_app(build_container(settings))
     config = uvicorn.Config(app, host=HOST, port=args.port, log_level="info", access_log=False)
     server = uvicorn.Server(config)

@@ -113,20 +113,30 @@ class DailyReportService:
 
     def get(self, day: date) -> dict[str, Any] | None:
         return self._db.fetch_one(
-            "SELECT report_date AS date, content, notes, updated_at FROM daily_reports WHERE report_date = ?",
+            "SELECT report_date AS date, content, notes, status, updated_at FROM daily_reports WHERE report_date = ?",
             (day.isoformat(),),
         )
 
-    def save(self, day: date, content: str, notes: str) -> dict[str, Any]:
+    def save(self, day: date, content: str, notes: str, status: str = "final") -> dict[str, Any]:
         self._db.execute(
-            "INSERT INTO daily_reports(report_date, content, notes, updated_at) VALUES(?, ?, ?, ?) "
+            "INSERT INTO daily_reports(report_date, content, notes, status, updated_at) VALUES(?, ?, ?, ?, ?) "
             "ON CONFLICT(report_date) DO UPDATE SET content = excluded.content, notes = excluded.notes, "
-            "updated_at = excluded.updated_at",
-            (day.isoformat(), content, notes, utc_now()),
+            "status = excluded.status, updated_at = excluded.updated_at",
+            (day.isoformat(), content, notes, status, utc_now()),
         )
         saved = self.get(day)
         assert saved is not None
         return saved
+
+    def save_draft(self, day: date, content: str) -> dict[str, Any]:
+        if not content.strip():
+            raise ValueError("日報告草稿不可空白")
+        # 自動化只建立不存在的草稿，既有草稿與定稿皆保留。
+        changed = self._db.execute(
+            "INSERT OR IGNORE INTO daily_reports(report_date,content,notes,status,updated_at) VALUES(?,?,'','draft',?)",
+            (day.isoformat(), content, utc_now()),
+        )
+        return {"saved": changed > 0, "report": self.get(day)}
 
     def previous(self, day: date) -> dict[str, Any] | None:
         """指定日期之前最近一份有內容的日報告。"""

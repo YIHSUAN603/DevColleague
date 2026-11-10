@@ -96,6 +96,9 @@ class ActivityService:
             return AggregateResult()
         return await self._gather(None, lambda i: i.list_work_item_progress(ids.get(i.info.id, [])))
 
+    async def mentions(self) -> AggregateResult[WorkItem]:
+        return await self._gather(None, lambda i: i.list_mentions())
+
     async def projects(self) -> AggregateResult[str]:
         """所有連線可查詢的專案名稱（去除重複）。"""
         r = await self._gather(None, lambda i: i.list_projects())

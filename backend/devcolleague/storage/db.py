@@ -70,6 +70,37 @@ CREATE TABLE IF NOT EXISTS daily_reports (
     notes TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS memories (
+    id TEXT PRIMARY KEY, kind TEXT NOT NULL, content TEXT NOT NULL,
+    source TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+    content, content='memories', content_rowid='rowid', tokenize='trigram'
+);
+CREATE TRIGGER IF NOT EXISTS memory_insert AFTER INSERT ON memories BEGIN
+    INSERT INTO memory_fts(rowid, content) VALUES(new.rowid, new.content);
+END;
+CREATE TRIGGER IF NOT EXISTS memory_delete AFTER DELETE ON memories BEGIN
+    INSERT INTO memory_fts(memory_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+END;
+CREATE TRIGGER IF NOT EXISTS memory_update AFTER UPDATE ON memories BEGIN
+    INSERT INTO memory_fts(memory_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+    INSERT INTO memory_fts(rowid, content) VALUES(new.rowid, new.content);
+END;
+CREATE TABLE IF NOT EXISTS assistant_runs (
+    id TEXT PRIMARY KEY, routine_id TEXT, trigger TEXT NOT NULL,
+    conversation_id TEXT, started_at TEXT NOT NULL, finished_at TEXT,
+    status TEXT NOT NULL, prompt TEXT NOT NULL, system_prompt TEXT NOT NULL DEFAULT '',
+    events TEXT NOT NULL DEFAULT '[]', error TEXT
+);
+CREATE TABLE IF NOT EXISTS event_seen (
+    id TEXT PRIMARY KEY, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS routine_proposals (
+    id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL,
+    definition TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL
+);
 """
 
 
@@ -90,6 +121,9 @@ class Database:
         self._lock = threading.Lock()
         with self.transaction() as cur:
             cur.executescript(SCHEMA)
+            columns = {r[1] for r in cur.execute("PRAGMA table_info(daily_reports)")}
+            if "status" not in columns:
+                cur.execute("ALTER TABLE daily_reports ADD COLUMN status TEXT NOT NULL DEFAULT 'final'")
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Cursor]:

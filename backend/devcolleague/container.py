@@ -17,8 +17,16 @@ from .services.daily_report import DailyReportService
 from .services.dashboard import DashboardService
 from .services.events import EventBus, NotificationService
 from .services.summary import SummaryService
+from .services.memory import MemoryService
+from .services.event_monitor import EventMonitor
+from .services.scheduler import Scheduler
+from .routines.definitions import RoutineStore
+from .routines.service import RoutineService
+from .tools.assistant import register_assistant_tools
+from .tools.mcp_bridge import McpBridge
 from .storage.db import Database
 from .storage.secrets import KeyringSecretStore, SecretStore
+from .storage.secrets import connection_token_key, provider_api_key_key
 from .tools.base import ToolRegistry
 from .tools.platform import register_platform_tools
 
@@ -39,6 +47,11 @@ class Container:
     daily_report: DailyReportService
     events: EventBus
     notifications: NotificationService
+    memory: MemoryService
+    routines: RoutineService
+    monitor: EventMonitor
+    scheduler: Scheduler
+    mcp: McpBridge
 
 
 def build_container(
@@ -57,6 +70,24 @@ def build_container(
     register_platform_tools(tools, activity)
     gateway = Gateway(tools)
     events = EventBus()
+    notifications = NotificationService(events)
+    def known_secrets() -> list[str]:
+        keys = [connection_token_key(c.id) for c in connections.list()]
+        keys += [provider_api_key_key(p.id) for p in providers.list()]
+        return [settings.session_token] + [value for key in keys if (value := secrets.get(key))]
+
+    memory = MemoryService(db, known_secrets)
+    conversations = ConversationService(db, providers, gateway)
+    conversations.memory = memory
+    daily_report = DailyReportService(db, activity, providers, gateway)
+    summary = SummaryService(activity, providers, gateway)
+    routines = RoutineService(db, RoutineStore(settings.data_dir / "routines"), providers, gateway,
+                              conversations, memory, notifications)
+    conversations.routines = routines
+    register_assistant_tools(tools, memory, daily_report, routines, notifications, summary)
+    monitor = EventMonitor(db, activity, routines, notifications)
+    mcp = McpBridge(tools, settings.port)
+    gateway.mcp = mcp
     return Container(
         settings=settings,
         db=db,
@@ -67,9 +98,11 @@ def build_container(
         tools=tools,
         gateway=gateway,
         dashboard=DashboardService(db, activity),
-        conversations=ConversationService(db, providers, gateway),
-        summary=SummaryService(activity, providers, gateway),
-        daily_report=DailyReportService(db, activity, providers, gateway),
+        conversations=conversations,
+        summary=summary,
+        daily_report=daily_report,
         events=events,
-        notifications=NotificationService(events),
+        notifications=notifications,
+        memory=memory, routines=routines, monitor=monitor,
+        scheduler=Scheduler(routines, monitor), mcp=mcp,
     )
