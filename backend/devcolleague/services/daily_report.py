@@ -153,8 +153,9 @@ class DailyReportService:
         groups: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
         def group(item: Any) -> dict[str, list[dict[str, Any]]]:
-            source = (item.project or item.repo or "").casefold()
-            name = name_by_source.get(source, UNMAPPED_PROJECT)
+            # 對應不到日報告專案時，直接以平台專案名稱（沒有專案時用 repo 名稱）作為標題
+            source = item.project or item.repo or ""
+            name = name_by_source.get(source.casefold()) or source or UNMAPPED_PROJECT
             return groups.setdefault(
                 name, {"progress": [], "work_items_changed": [], "pull_requests": [], "commits": []}
             )
@@ -186,7 +187,9 @@ class DailyReportService:
                      "date": c.date.isoformat() if c.date else None, "url": c.url}
                 )
 
-        names = [p.name for p in projects] + [UNMAPPED_PROJECT]
+        configured = [p.name for p in projects]
+        unmapped_sources = [n for n in groups if n not in configured and n != UNMAPPED_PROJECT]
+        names = configured + unmapped_sources + [UNMAPPED_PROJECT]
         return {
             "date": day.isoformat(),
             "project_names": names,
