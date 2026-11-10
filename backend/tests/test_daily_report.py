@@ -102,9 +102,9 @@ async def test_collect_groups_by_report_project(client: TestClient, container: C
     data = await container.daily_report.collect(DAY)
 
     assert data["errors"] == []
-    assert data["project_names"] == ["公路局", "海洋", "未分類"]
-    # 「海洋」沒有對應的平台專案，Ocean 專案的 commit 歸到「未分類」
-    assert [p["name"] for p in data["projects"]] == ["公路局", "未分類"]
+    # 「海洋」沒有對應的平台專案，Ocean 專案的 commit 以平台專案名稱自成一組，排在設定的專案之後
+    assert data["project_names"] == ["公路局", "海洋", "Ocean", "未分類"]
+    assert [p["name"] for p in data["projects"]] == ["公路局", "Ocean"]
 
     thb = data["projects"][0]
     assert thb["progress"] == [{

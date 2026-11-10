@@ -167,7 +167,7 @@ export function DailyReportPage() {
         <h2>日報告</h2>
       </div>
       {!hasProjects && (
-        <div className="alert warn">尚未設定日報告的專案對應，所有活動會歸在「未分類」。請到「設定」新增專案對應。</div>
+        <div className="alert warn">尚未設定日報告的專案對應，活動會以平台專案名稱（ADS 專案或 GitHub repo）作為標題。請到「設定」新增專案對應。</div>
       )}
       <div className="card">
         <div className="form-row">

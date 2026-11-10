@@ -360,7 +360,7 @@ function DailyReportSettings() {
         </button>
       </div>
       <p className="muted small">
-        依日報告文件中的順序列出專案，並選擇各自對應的平台專案（ADS 專案或 GitHub repo）。沒有對應到的活動會歸在「未分類」。
+        依日報告文件中的順序列出專案，並選擇各自對應的平台專案（ADS 專案或 GitHub repo）。沒有對應到的活動會以平台專案名稱作為標題，排在設定的專案之後。
       </p>
       {error && <div className="alert error">{error}</div>}
       {sourceErrors.map((e, i) => (
