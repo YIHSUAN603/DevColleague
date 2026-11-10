@@ -4,6 +4,7 @@ import type { AssistantRun, Routine } from '../api/assistantTypes'
 import { EventMonitorSettings } from '../components/EventMonitorSettings'
 import { RoutineForm } from '../components/RoutineForm'
 import { errorMessage } from '../utils'
+import { describeSchedule } from '../utils/routineSchedule'
 
 const EMPTY_ROUTINE: Routine = {
   id: '', name: '', prompt: '', schedule: null, command: null, provider: null, model: null,
@@ -58,20 +59,20 @@ export function RoutinesPage({ onOpenConversation }: { onOpenConversation: (id: 
 
   return <div className="page">
     <div className="page-header"><h2>背景助理</h2>
-      <button className="primary" onClick={() => setEditing({ ...EMPTY_ROUTINE })}>新增例行流程</button></div>
+      <button className="primary" onClick={() => { setError(''); setEditing({ ...EMPTY_ROUTINE }) }}>新增例行流程</button></div>
     <p className="muted">內建範本預設停用。設定 Provider 與排程後啟用，即可在系統匣背景執行。</p>
     {error && <div className="alert error">{error}</div>}
     {fileErrors.map((message) => <div className="alert error" key={message}>{message}</div>)}
     {editing && <RoutineForm key={editing.id} initial={editing} isSaving={isSaving}
-      onSave={(routine) => void save(routine)} onCancel={() => setEditing(null)} />}
+      onSave={(routine) => void save(routine)} onCancel={() => { setError(''); setEditing(null) }} />}
     <div className="card"><h3>例行流程</h3><ul className="settings-list">
       {items.map((item) => <li key={item.id}><div><strong>{item.name}</strong> <span className="badge">
-        {item.enabled ? '排程已啟用' : '手動執行'}</span>
-        <div className="muted small">{item.schedule || '無排程'} · {item.command || '無對話指令'}</div></div>
+          {item.enabled && item.schedule ? '排程已啟用' : '自動排程未啟用'}</span>
+        <div className="muted small">{describeSchedule(item.schedule)} · {item.command || '無對話指令'}</div></div>
         <div className="row-actions">
           <button disabled={runs.some((r) => r.routine_id === item.id && r.status === 'running')}
             onClick={() => void run(item.id)}>立即執行</button>
-          <button onClick={() => setEditing(item)}>編輯</button>
+          <button onClick={() => { setError(''); setEditing(item) }}>編輯</button>
           <button onClick={() => void remove(item.id)}>刪除</button>
         </div></li>)}
     </ul></div>
