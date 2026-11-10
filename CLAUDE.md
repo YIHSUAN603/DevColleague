@@ -10,7 +10,7 @@ DevColleague 是給開發者個人使用的桌面 AI 助理，整合 ADS/TFS 與
 - 需求規格：[docs/requirements.md](docs/requirements.md)
 - 架構設計：[docs/architecture.md](docs/architecture.md)
 
-目前已完成第一階段 MVP（F1–F5），第二階段以後尚未實作。
+目前已完成第一階段 MVP（F1–F5）與 F15；第二階段已完成 F16，其餘尚未實作。
 
 ## 常用指令
 

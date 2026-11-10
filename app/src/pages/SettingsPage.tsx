@@ -1,3 +1,9 @@
+import { isTauri } from '@tauri-apps/api/core'
+import {
+  disable as disableAutostart,
+  enable as enableAutostart,
+  isEnabled as isAutostartEnabled,
+} from '@tauri-apps/plugin-autostart'
 import { useCallback, useEffect, useState } from 'react'
 import { del, get, patch, post, put } from '../api/backend'
 import type {
@@ -23,7 +29,75 @@ export function SettingsPage() {
       <ConnectionsSettings />
       <ProvidersSettings />
       <DailyReportSettings />
+      <BackgroundSettings />
     </div>
+  )
+}
+
+// ---------------- 背景執行與通知（F16） ----------------
+
+function BackgroundSettings() {
+  const desktop = isTauri()
+  const [autostart, setAutostart] = useState<boolean | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!desktop) return
+    isAutostartEnabled()
+      .then(setAutostart)
+      .catch((err) => setError(errorMessage(err)))
+  }, [desktop])
+
+  const toggleAutostart = async (enabled: boolean) => {
+    setError(null)
+    try {
+      if (enabled) await enableAutostart()
+      else await disableAutostart()
+      setAutostart(await isAutostartEnabled())
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  const sendTest = async () => {
+    setError(null)
+    setMessage(null)
+    try {
+      const result = await post<{ subscribers: number }>('/notifications/test')
+      setMessage(result.subscribers > 0 ? '已送出測試通知' : '已送出，但目前沒有接收通知的視窗，將在連線後顯示')
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  return (
+    <section className="card">
+      <div className="card-title">
+        <h3>背景執行與通知</h3>
+      </div>
+      <p className="muted small">
+        關閉視窗時 DevColleague 會縮到系統匣並在背景繼續執行；從系統匣圖示選「結束」才會完全停止。
+      </p>
+      {error && <div className="alert error">{error}</div>}
+      {desktop ? (
+        <label className="inline">
+          <input
+            type="checkbox"
+            checked={autostart ?? false}
+            disabled={autostart === null}
+            onChange={(e) => void toggleAutostart(e.target.checked)}
+          />
+          登入 Windows 後自動啟動（不顯示主視窗，直接常駐系統匣）
+        </label>
+      ) : (
+        <p className="muted small">開機啟動與系統通知只在桌面 App 中提供。</p>
+      )}
+      <div className="form-actions">
+        <button onClick={() => void sendTest()}>發送測試通知</button>
+        {message && <span className="muted small">{message}</span>}
+      </div>
+    </section>
   )
 }
 

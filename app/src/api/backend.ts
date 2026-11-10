@@ -10,6 +10,8 @@ interface BackendInfo {
 
 let infoPromise: Promise<BackendInfo> | null = null
 
+const EVENT_IDLE_TIMEOUT_MS = 45000
+
 async function loadBackendInfo(): Promise<BackendInfo> {
   if (isTauri()) {
     // 由 Tauri 啟動 sidecar 時產生的 port 與 token
@@ -104,6 +106,15 @@ export async function stream(
 ): Promise<void> {
   const [url, req] = await buildRequest(path, { method: 'POST', body: JSON.stringify(body), signal })
   const resp = await fetch(url, req)
+  await readSse(resp, onEvent)
+}
+
+/** 逐一解析 SSE 事件；只有註解（例如心跳）的區塊會被略過 */
+async function readSse(
+  resp: Response,
+  onEvent: (event: StreamEvent) => void,
+  onChunk?: () => void,
+): Promise<void> {
   if (!resp.ok || !resp.body) throw await errorFrom(resp)
 
   const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader()
@@ -111,6 +122,7 @@ export async function stream(
   for (;;) {
     const { value, done } = await reader.read()
     if (done) break
+    onChunk?.()
     buffer += value.replace(/\r\n/g, '\n')
     let sep: number
     while ((sep = buffer.indexOf('\n\n')) >= 0) {
@@ -124,5 +136,37 @@ export async function stream(
       }
       if (dataLines.length) onEvent({ type, data: JSON.parse(dataLines.join('\n')) })
     }
+  }
+}
+
+/**
+ * 訂閱後端的背景事件通道（F16），連線中斷時自動重連，直到 signal 中止。
+ */
+export async function subscribeEvents(onEvent: (event: StreamEvent) => void, signal: AbortSignal): Promise<void> {
+  let delay = 1000
+  while (!signal.aborted) {
+    // 後端每 15 秒送一次心跳；超過 EVENT_IDLE_TIMEOUT_MS 沒收到任何資料就視為斷線並重連
+    const attempt = new AbortController()
+    const abortAttempt = () => attempt.abort()
+    signal.addEventListener('abort', abortAttempt)
+    let watchdog = setTimeout(abortAttempt, EVENT_IDLE_TIMEOUT_MS)
+    const resetWatchdog = () => {
+      clearTimeout(watchdog)
+      watchdog = setTimeout(abortAttempt, EVENT_IDLE_TIMEOUT_MS)
+    }
+    try {
+      const [url, req] = await buildRequest('/events', { signal: attempt.signal })
+      const resp = await fetch(url, req)
+      delay = 1000
+      await readSse(resp, onEvent, resetWatchdog)
+    } catch (err) {
+      if (signal.aborted) return
+      console.warn('背景事件通道中斷，稍後重新連線', err)
+    } finally {
+      clearTimeout(watchdog)
+      signal.removeEventListener('abort', abortAttempt)
+    }
+    await new Promise((r) => setTimeout(r, delay))
+    delay = Math.min(delay * 2, 30000)
   }
 }

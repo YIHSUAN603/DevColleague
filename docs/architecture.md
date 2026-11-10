@@ -49,8 +49,8 @@
 
 ## 3. 行程模型
 
-1. 使用者啟動 Tauri App；設定開機啟動時，由作業系統在登入後啟動，此時不顯示主視窗，直接常駐系統匣。
-   （第二階段 F16 實作；目前只能手動啟動）
+1. 使用者啟動 Tauri App；設定開機啟動時，由作業系統在登入後以 `--autostart` 參數啟動，此時不顯示主視窗，直接常駐系統匣。
+   發佈版第一次執行時預設開啟開機啟動，之後依設定頁的選擇；開發模式不自動開啟。只允許一個實例，再次開啟時改為顯示既有視窗。
 2. Tauri 以 sidecar 方式啟動 Python 後端執行檔，並傳入：
    - 一個可用的動態 port（命令列參數 `--port`）
    - 一組隨機產生的 session token（環境變數 `DEVCOLLEAGUE_SESSION_TOKEN`，不放在命令列，避免被其他行程看見）
@@ -58,7 +58,6 @@
 4. 前端透過 Tauri 指令 `backend_info` 取得 port 與 token，輪詢 `/api/health` 直到後端就緒後開始呼叫。
    SSE 串流以 `fetch` 讀取（`EventSource` 無法帶 Authorization header）。
 5. 關閉視窗時，App 縮到系統匣，後端繼續執行背景工作（Routine 排程、每 5 分鐘檢查一次事件提醒）。
-   （第二階段 F16 實作；目前關閉視窗即結束 App）
 6. 從系統匣選「結束」時，Tauri 負責結束後端子行程。
 7. 後端以 `--exit-on-stdin-eof` 啟動，stdin 接到 Tauri 行程；Tauri 異常結束時 stdin 關閉，後端隨之退出，不會留下孤兒行程。
 
@@ -66,11 +65,18 @@
 
 背景工作（Routine、事件提醒）的結果需要由後端主動送到桌面外殼：
 
-- 後端提供一條長連線的 SSE 事件通道（例如 `/api/events`），送出「Routine 執行完成」「有新的提醒」等事件。
-- 視窗縮到系統匣時只是隱藏，WebView 仍在執行；前端持續訂閱事件通道，收到事件後透過 Tauri 發送系統通知。
-  點擊通知時顯示主視窗並開啟對應的對話或頁面。
-- 隱藏中的 WebView 是否能穩定維持連線需在實作時驗證；若不可靠，改由 Tauri（Rust）端訂閱事件通道並發送通知。
-- 系統匣、開機啟動、系統通知使用 Tauri 的官方外掛，實際用法以實作時的官方文件為準。
+- 後端提供一條長連線的 SSE 事件通道 `/api/events`（`services/events.py` 的 `EventBus`），送出「Routine 執行完成」「有新的提醒」等事件。
+  背景工作以 `NotificationService.notify(title, body, target)` 發送通知，事件類型為 `notification`，
+  `target` 描述點擊後要開啟的位置（`page`，以及開啟對話時的 `conversation_id`）。
+- 沒有空閒時每 15 秒送一次 SSE 註解作為心跳；前端超過 45 秒沒收到資料即視為斷線並重連。
+- 前端尚未連上時發布的事件會暫存（最多 50 筆），交給第一個連上的訂閱者，避免啟動期間的通知遺失。
+- 視窗縮到系統匣時只是隱藏，WebView 仍在執行；前端持續訂閱事件通道，收到事件後呼叫 Tauri 指令 `show_notification` 顯示系統通知。
+  點擊通知時 Rust 端顯示主視窗，並以 `notification-activated` 事件通知前端開啟對應的對話或頁面。
+- 系統匣使用 Tauri 內建的 tray-icon；開機啟動、單一實例使用官方外掛（autostart、single-instance）。
+- 系統通知不使用官方 notification 外掛：其桌面版無法得知使用者點擊了通知。改為直接使用該外掛在 Windows 底層所用的
+  `tauri-winrt-notification`，以 `on_activated` 處理點擊。未安裝（從 `target/` 執行）時借用 PowerShell 的 AppUserModelID，
+  安裝版使用 `identifier`。目前只發佈 Windows 版，其他平台的 `show_notification` 回傳錯誤。
+- 設定頁「背景執行與通知」可切換開機啟動，並以 `POST /api/notifications/test` 發送測試通知。
 
 開發階段可以分開啟動：後端用 `python -m devcolleague` 執行，前端用 Vite dev server，不需要每次都打包。
 `npm run tauri dev` 時，Tauri 直接以 `backend/.venv` 的 Python 啟動後端；發佈版才使用 PyInstaller 打包的 sidecar。
