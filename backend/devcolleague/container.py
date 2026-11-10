@@ -15,6 +15,7 @@ from .services.activity import ActivityService
 from .services.conversations import ConversationService
 from .services.daily_report import DailyReportService
 from .services.dashboard import DashboardService
+from .services.events import EventBus, NotificationService
 from .services.summary import SummaryService
 from .storage.db import Database
 from .storage.secrets import KeyringSecretStore, SecretStore
@@ -36,6 +37,8 @@ class Container:
     conversations: ConversationService
     summary: SummaryService
     daily_report: DailyReportService
+    events: EventBus
+    notifications: NotificationService
 
 
 def build_container(
@@ -53,6 +56,7 @@ def build_container(
     tools = ToolRegistry()
     register_platform_tools(tools, activity)
     gateway = Gateway(tools)
+    events = EventBus()
     return Container(
         settings=settings,
         db=db,
@@ -66,4 +70,6 @@ def build_container(
         conversations=ConversationService(db, providers, gateway),
         summary=SummaryService(activity, providers, gateway),
         daily_report=DailyReportService(db, activity, providers, gateway),
+        events=events,
+        notifications=NotificationService(events),
     )

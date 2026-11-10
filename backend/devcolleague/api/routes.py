@@ -16,7 +16,8 @@ from ..llm.providers.cli.base import CliProvider
 from ..llm.registry import PROVIDER_KINDS
 from ..llm.types import ChatMessage, ChatRequest
 from ..services.daily_report import ReportProject, default_report_date
-from .deps import get_container, sse_response, verify_session_token
+from ..services.events import NotificationTarget
+from .deps import event_stream_response, get_container, sse_response, verify_session_token
 
 router = APIRouter(prefix="/api", dependencies=[Depends(verify_session_token)])
 
@@ -31,6 +32,25 @@ def _not_found(what: str) -> HTTPException:
 @router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "version": __version__}
+
+
+# ---------- 背景事件與通知（F16） ----------
+
+
+@router.get("/events")
+async def events(c: Container = Depends(get_container)):
+    """長連線 SSE：送出例行流程完成、新提醒等背景事件。"""
+    return event_stream_response(c.events)
+
+
+@router.post("/notifications/test")
+async def send_test_notification(c: Container = Depends(get_container)) -> dict[str, Any]:
+    notification = c.notifications.notify(
+        "DevColleague 測試通知",
+        "系統通知運作正常，點擊可開啟設定頁。",
+        NotificationTarget(page="settings"),
+    )
+    return {"id": notification.id, "subscribers": c.events.subscriber_count}
 
 
 # ---------- 平台連線（F1） ----------

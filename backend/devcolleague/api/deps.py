@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 from collections.abc import AsyncIterator
@@ -12,6 +13,10 @@ from fastapi.responses import StreamingResponse
 
 from ..container import Container
 from ..llm.types import ChatEvent
+from ..services.events import EventBus
+
+# 背景事件通道的心跳間隔（秒），讓前端能察覺連線中斷
+EVENT_HEARTBEAT_SECONDS = 15.0
 
 
 def get_container(request: Request) -> Container:
@@ -30,7 +35,11 @@ async def verify_session_token(request: Request, authorization: str | None = Hea
 
 def _encode(event: ChatEvent) -> str:
     data = event.data if not is_dataclass(event.data) else asdict(event.data)
-    return f"event: {event.type}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+    return _format_sse(event.type, data)
+
+
+def _format_sse(event_type: str, data: object) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
 def sse_response(events: AsyncIterator[ChatEvent]) -> StreamingResponse:
@@ -43,6 +52,29 @@ def sse_response(events: AsyncIterator[ChatEvent]) -> StreamingResponse:
 
     return StreamingResponse(
         body(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def event_stream(bus: EventBus, heartbeat: float = EVENT_HEARTBEAT_SECONDS) -> AsyncIterator[str]:
+    """持續送出背景事件；沒有事件時定期送出 SSE 註解作為心跳。"""
+    queue = bus.subscribe()
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=heartbeat)
+            except TimeoutError:
+                yield ": ping\n\n"
+                continue
+            yield _format_sse(event.type, event.data)
+    finally:
+        bus.unsubscribe(queue)
+
+
+def event_stream_response(bus: EventBus) -> StreamingResponse:
+    return StreamingResponse(
+        event_stream(bus),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

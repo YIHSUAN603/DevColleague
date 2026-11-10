@@ -171,3 +171,17 @@ export interface StreamEvent {
   type: string
   data: Record<string, unknown>
 }
+
+/** 點擊通知後要開啟的位置（F16） */
+export interface NotificationTarget {
+  page: string
+  conversation_id: string | null
+}
+
+export interface AppNotification {
+  id: string
+  title: string
+  body: string
+  target: NotificationTarget | null
+  created_at: string
+}

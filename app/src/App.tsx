@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { waitForBackend } from './api/backend'
+import { startNotificationBridge } from './api/notifications'
 import { ChatPage } from './pages/ChatPage'
 import { DailyReportPage } from './pages/DailyReportPage'
 import { DashboardPage } from './pages/DashboardPage'
@@ -21,11 +22,26 @@ export default function App() {
   const [page, setPage] = useState<Page>('dashboard')
   const [backend, setBackend] = useState<'starting' | 'ready' | string>('starting')
 
+  // 點擊通知要開啟的對話；以物件包裝，重複開啟同一段對話時也會觸發
+  const [openConversation, setOpenConversation] = useState<{ id: string } | null>(null)
+
   useEffect(() => {
     waitForBackend()
       .then(() => setBackend('ready'))
       .catch((err) => setBackend(errorMessage(err)))
   }, [])
+
+  // 後端就緒後開始接收背景通知（F16）
+  useEffect(() => {
+    if (backend !== 'ready') return
+    return startNotificationBridge((target) => {
+      if (!NAV.some((n) => n.id === target.page)) return
+      setPage(target.page as Page)
+      if (target.page === 'chat' && target.conversation_id) {
+        setOpenConversation({ id: target.conversation_id })
+      }
+    })
+  }, [backend])
 
   if (backend !== 'ready') {
     return (
@@ -54,7 +70,7 @@ export default function App() {
       <main className="content">
         {/* 對話頁保持掛載，切換頁面時不中斷進行中的串流 */}
         <div hidden={page !== 'chat'} className="page-fill">
-          <ChatPage active={page === 'chat'} />
+          <ChatPage active={page === 'chat'} openRequest={openConversation} />
         </div>
         {page === 'dashboard' && <DashboardPage onOpenSettings={() => setPage('settings')} />}
         {page === 'summary' && <SummaryPage />}

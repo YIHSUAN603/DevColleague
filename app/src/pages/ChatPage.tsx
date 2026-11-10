@@ -12,7 +12,7 @@ const TOOL_LABEL: Record<string, string> = {
   list_my_commits: '查詢 commit',
 }
 
-export function ChatPage({ active }: { active: boolean }) {
+export function ChatPage({ active, openRequest }: { active: boolean; openRequest: { id: string } | null }) {
   const [list, setList] = useState<ConversationSummary[]>([])
   const [current, setCurrent] = useState<Conversation | null>(null)
   const [input, setInput] = useState('')
@@ -35,6 +35,21 @@ export function ChatPage({ active }: { active: boolean }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' })
   }, [current?.messages])
+
+  // 點擊系統通知時開啟指定對話（例如例行流程的執行結果）；串流進行中則等結束後再切換
+  const handledOpenRef = useRef<{ id: string } | null>(null)
+  useEffect(() => {
+    if (!openRequest || streaming || handledOpenRef.current === openRequest) return
+    handledOpenRef.current = openRequest
+    setError(null)
+    Promise.all([get<Conversation>(`/conversations/${openRequest.id}`), loadList()])
+      .then(([conv]) => {
+        setCurrent(conv)
+        setProviderId(conv.provider_id)
+        setModel(conv.model)
+      })
+      .catch((err) => setError(errorMessage(err)))
+  }, [openRequest, streaming, loadList])
 
   const open = async (id: string) => {
     if (streaming) return
