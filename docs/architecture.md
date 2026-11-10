@@ -35,9 +35,10 @@
 │   │    └─ providers/cli/   claude -p 等 CLI 工具             │
 │   ├─ agents/         角色載入、管家派工                       │
 │   ├─ routines/       例行流程定義與執行                       │
-│   ├─ scheduler/      背景排程（主動提醒、Routine）             │
+│   ├─ scheduler/      背景排程（事件提醒、Routine）             │
 │   ├─ tools/          提供給 LLM 呼叫的工具（內建 + MCP）       │
-│   │    └─ mcp/       MCP Client 與工具轉接                   │
+│   │    ├─ mcp/       MCP Client 與工具轉接                   │
+│   │    └─ mcp_server/ 把內建工具提供給 CLI Provider          │
 │   └─ storage/        SQLite、keyring                        │
 └────────────────────────────────────────────────────────────┘
        │                  │               │              │
@@ -48,16 +49,28 @@
 
 ## 3. 行程模型
 
-1. 使用者啟動 Tauri App。
+1. 使用者啟動 Tauri App；設定開機啟動時，由作業系統在登入後啟動，此時不顯示主視窗，直接常駐系統匣。
+   （第二階段 F16 實作；目前只能手動啟動）
 2. Tauri 以 sidecar 方式啟動 Python 後端執行檔，並傳入：
    - 一個可用的動態 port（命令列參數 `--port`）
    - 一組隨機產生的 session token（環境變數 `DEVCOLLEAGUE_SESSION_TOKEN`，不放在命令列，避免被其他行程看見）
 3. 後端只監聽 `127.0.0.1`，所有請求都必須帶 `Authorization: Bearer <session token>`，避免本機其他程式或網頁存取。
 4. 前端透過 Tauri 指令 `backend_info` 取得 port 與 token，輪詢 `/api/health` 直到後端就緒後開始呼叫。
    SSE 串流以 `fetch` 讀取（`EventSource` 無法帶 Authorization header）。
-5. 關閉視窗時，App 縮到系統匣，後端繼續執行背景工作（例如每 5 分鐘檢查一次主動提醒）。（第三階段實作；目前關閉視窗即結束 App）
+5. 關閉視窗時，App 縮到系統匣，後端繼續執行背景工作（Routine 排程、每 5 分鐘檢查一次事件提醒）。
+   （第二階段 F16 實作；目前關閉視窗即結束 App）
 6. 從系統匣選「結束」時，Tauri 負責結束後端子行程。
 7. 後端以 `--exit-on-stdin-eof` 啟動，stdin 接到 Tauri 行程；Tauri 異常結束時 stdin 關閉，後端隨之退出，不會留下孤兒行程。
+
+### 3.1 背景事件與系統通知（F16）
+
+背景工作（Routine、事件提醒）的結果需要由後端主動送到桌面外殼：
+
+- 後端提供一條長連線的 SSE 事件通道（例如 `/api/events`），送出「Routine 執行完成」「有新的提醒」等事件。
+- 視窗縮到系統匣時只是隱藏，WebView 仍在執行；前端持續訂閱事件通道，收到事件後透過 Tauri 發送系統通知。
+  點擊通知時顯示主視窗並開啟對應的對話或頁面。
+- 隱藏中的 WebView 是否能穩定維持連線需在實作時驗證；若不可靠，改由 Tauri（Rust）端訂閱事件通道並發送通知。
+- 系統匣、開機啟動、系統通知使用 Tauri 的官方外掛，實際用法以實作時的官方文件為準。
 
 開發階段可以分開啟動：後端用 `python -m devcolleague` 執行，前端用 Vite dev server，不需要每次都打包。
 `npm run tauri dev` 時，Tauri 直接以 `backend/.venv` 的 Python 啟動後端；發佈版才使用 PyInstaller 打包的 sidecar。
@@ -173,8 +186,18 @@ ADS/TFS 與 GitHub 的資料轉換為共用模型，上層功能與 UI 不需要
 - `list_work_items`：查詢 Work Item／Issue（已實作）
 - `list_builds`：查詢最近的建置結果（已實作）
 - `list_my_commits`：查詢我最近的 commit（已實作）
-- `get_pull_request_diff`：取得 PR 的變更內容（第二階段，配合 F6／F7 實作）
-- `get_build_log`：取得建置 log（第二階段，配合 F8 實作）
+- `get_pull_request_diff`：取得 PR 的變更內容（第三階段，配合 F6／F7 實作）
+- `get_build_log`：取得建置 log（第三階段，配合 F8 實作）
+
+第二階段另外新增讓 LLM 能「行動」的工具，這些工具不經過 Integration 層（名稱為暫定，以實作為準）：
+
+| 工具 | 用途 | 風險等級 |
+|---|---|---|
+| `create_daily_report_draft` | 產生指定日期的日報告草稿（沿用 F15 的彙整與進度計算） | 本機寫入 |
+| `get_daily_report` | 讀取指定日期的日報告與其狀態（草稿／定稿） | 唯讀 |
+| `notify_user` | 發送系統通知 | 通知 |
+| `search_memory`／`save_memory` | 查詢、記下記憶（F10） | 唯讀／本機寫入 |
+| `list_routines`／`save_routine`／`disable_routine` | 查詢、建立或修改、停用 Routine（F14） | 唯讀／需使用者確認 |
 
 工具只回傳 LLM 需要的欄位，避免浪費 token。
 
@@ -208,6 +231,13 @@ ADS/TFS 與 GitHub 的資料轉換為共用模型，上層功能與 UI 不需要
 
 ADS/TFS 的父子階層以 `_apis/wit/workitems?$expand=relations` 取得，
 連結類型為 `System.LinkTypes.Hierarchy-Reverse`（父）與 `System.LinkTypes.Hierarchy-Forward`（子）。
+
+草稿與定稿（第二階段，配合 F14 實作）：
+
+- 每天的日報告帶有狀態：`draft`（草稿）或 `final`（定稿）。
+- Routine 透過 `create_daily_report_draft` 產生的內容一律為草稿；當天已有使用者編輯過的內容或定稿時不覆蓋，
+  工具回傳「已存在」讓 LLM 據此回報。
+- 使用者在日報告頁補充、編輯並儲存後成為定稿。帶入「最近一份日報告」時優先使用定稿。
 
 ## 6. MCP 整合
 
@@ -261,6 +291,20 @@ ADS/TFS、GitHub 這類核心平台需要統一資料模型與儀表板，仍由
 - 機密值同樣以環境變數傳給 CLI 子行程，不寫入暫存設定檔。
 - 各 CLI 指定 MCP 設定的參數與格式，以實作時各 CLI 的官方文件為準。
 
+### 6.5 把內建工具提供給 CLI（F17）
+
+CLI Provider 的 `custom_tools` 為 False，Gateway 無法替它執行 tool loop，因此 CLI 預設看不到 `tools/` 中的內建工具。
+為了讓 CLI 模式也能執行 Routine 與事件提醒，後端另外扮演 MCP Server 的角色（`tools/mcp_server/`）：
+
+- 以 Streamable HTTP 掛在後端同一個 FastAPI 行程上，只監聽 `127.0.0.1`，並驗證 token。
+- 提供的工具來自同一個工具註冊表，與 API 模式看到的工具一致；工具的風險分級與無人值守的限制同樣適用。
+- 執行 CLI 時，把這個 MCP Server 加進傳給 CLI 的 MCP 設定，並在允許的工具清單中加入這組工具；
+  CLI 仍不得修改檔案或執行指令。
+- token 以環境變數傳給 CLI 子行程，不寫入暫存設定檔。
+- 與 6.1 的 MCP Client 方向相反：6.1 是 DevColleague 使用別人的工具，這裡是把自己的工具給 CLI 使用。
+- 各 CLI 指定 MCP Server 與允許工具的參數，以實作時官方文件為準；這是第二階段中不確定性最高的部分，
+  動工前需先查證。
+
 ## 7. 角色與派工
 
 ### 7.1 角色定義
@@ -313,6 +357,14 @@ model: <model-id>          # 選填
 
 ## 8. 例行流程（Routine）
 
+Routine 與事件提醒是「LLM 驅動」的核心：由程式決定何時喚醒 LLM，由 LLM 決定做什麼、是否通知使用者。
+
+| 喚醒來源 | 由誰判斷時機 | 說明 |
+|---|---|---|
+| 時間 | 排程器比對 cron | 例如工作日 08:30 的晨間流程；錯過時於下次啟動補跑一次 |
+| 平台變化 | 排程器輪詢並比對快照 | 有變化才喚醒 LLM，見 8.4 |
+| 使用者交代 | 對話中的 LLM | 透過 `save_routine` 等工具建立或調整 Routine，套用前請使用者確認 |
+
 ### 8.1 Routine 定義
 
 Routine 同樣以 Markdown 檔定義，放在使用者資料目錄的 `routines/` 下：
@@ -321,36 +373,65 @@ Routine 同樣以 Markdown 檔定義，放在使用者資料目錄的 `routines/
 ---
 id: morning-brief
 name: 晨間簡報
-role: butler               # 執行角色，預設為管家
+role: butler               # 執行角色（F13 完成後生效；在此之前以預設的助理設定執行）
+provider: claude-api       # 選填，無人值守執行使用的 Provider；未指定時使用預設 Provider
 schedule: "30 8 * * 1-5"   # cron 格式；省略時只能手動執行
 command: /morning          # 選填，在對話中輸入即可手動觸發
 notify: true               # 完成後是否發送系統通知
 catch_up: true             # App 未執行而錯過時，下次啟動是否補跑一次
-allow_side_effects: []     # 無人值守時允許使用的有副作用工具，預設為空
+allow_side_effects: []     # 無人值守時允許使用的、會修改外部狀態的工具，預設為空
 ---
 
 今天是 {{today}}，上次執行時間是 {{last_run_at}}。
-請彙整：待我審查的 PR、昨晚失敗的建置、今天的行程……
+請產生上一個工作日的日報告草稿，並整理今天的待辦：待我審查的 PR、指派給我的 Work Item、昨晚失敗的建置……
 ```
 
 - 範本變數由後端在執行前代入，第一版提供 `{{today}}`、`{{yesterday}}`、`{{last_run_at}}`。
-- F4 的站會報告與週報以內建 Routine 範本提供。
+- 內建範本：晨間流程，以及 F4 的站會報告與週報。
+- 提示只描述目標，要查哪些資料、是否需要產生草稿、通知內容怎麼寫，由 LLM 透過工具自行決定。
+- LLM 透過 `save_routine` 建立或修改 Routine 時，後端寫入同一種 Markdown 檔，與手動編輯的結果一致。
 
 ### 8.2 執行流程
 
-1. 排程器到點（或使用者手動觸發）時，代入範本變數，以指定角色開一段新對話並送出。
-2. 執行過程與一般對話相同（可派工、可呼叫工具），結果存成一段對話。
+1. 排程器到點（或使用者手動觸發）時，代入範本變數，開一段新對話並送出；有指定角色時以該角色執行。
+2. 執行過程與一般對話相同（可呼叫工具；F13 完成後可派工），結果存成一段對話。
 3. 若 `notify` 為真，發送系統通知；點擊通知開啟該對話，使用者可接續追問。
-4. 執行紀錄（開始／結束時間、成功或失敗、對應對話）寫入 SQLite。
+4. 執行紀錄（開始／結束時間、成功或失敗、對應對話、送給 LLM 的資料與工具呼叫過程）寫入 SQLite。
 
-無人值守時沒有人能確認，因此有副作用的工具只有列在 `allow_side_effects` 中的才能執行，
-其餘一律拒絕並在結果中說明。
+無人值守時沒有人能確認，因此依工具的風險等級決定能否執行：
+
+| 風險等級 | 例子 | 無人值守時 |
+|---|---|---|
+| 唯讀 | 查詢 PR、讀取日報告、查詢記憶 | 允許 |
+| 本機寫入 | 產生日報告草稿、記下記憶 | 允許（不覆蓋使用者編輯過的內容） |
+| 通知 | 發送系統通知 | 允許 |
+| 修改外部狀態 | PR 留言、寄信、建立事件 | 只有列在 `allow_side_effects` 中的才能執行，其餘拒絕並在結果中說明 |
+| 改變自動行為 | 建立、修改、停用 Routine | 不允許；只能在使用者參與的對話中經確認後執行 |
+
+資料揭露：手動執行的功能（例如工作摘要、日報告頁）仍在送出前顯示資料；無人值守執行時無法事前顯示，
+改為把當次送給 LLM 的提示、工具呼叫與工具結果完整存入執行紀錄，使用者可在 UI 事後查看。
+
+Provider：使用 Routine 指定的 Provider，未指定時使用預設 Provider。Provider 的 `custom_tools` 為 False 時（CLI 模式），
+需透過 6.5 的 MCP 轉接取得工具；F17 完成前，這類 Provider 不能執行無人值守的 Routine，並在設定畫面提示。
 
 ### 8.3 背景排程器
 
-- `scheduler/` 是與 F9 主動提醒共用的背景排程器，在 App 縮到系統匣時繼續運作。
+- `scheduler/` 是與 F9 事件提醒共用的背景排程器，隨後端啟動，在 App 縮到系統匣時繼續運作。
 - 啟動時比對每個 Routine 的上次執行時間與排程，若有錯過且 `catch_up` 為真，補跑一次（不會補跑多次）。
 - 同一個 Routine 同時只會有一個執行中的實例。
+
+### 8.4 事件提醒（F9）
+
+1. 排程器定期（預設每 5 分鐘）透過 Integration 層查詢：待我審查的 PR、被提及的項目、最近的建置、我建立的 PR。
+2. 由程式與上次保存的快照比對，找出新的事件：新的審查請求或提及、新的建置失敗、PR 擱置超過指定天數。
+   同一個事件只會產生一次，不重複提醒。
+3. 沒有新事件時到此結束，不呼叫 LLM。
+4. 有新事件時喚醒 LLM，提供事件內容與相關記憶，由 LLM 判斷是否值得通知、如何摘要，
+   需要時可再呼叫唯讀工具查詢細節，最後以 `notify_user` 通知或決定不打擾。
+5. 過程與結果同樣寫入執行紀錄，工具權限與資料揭露的規則同 8.2。
+
+- 每日喚醒 LLM 的次數設有上限；達到上限後，當天其餘事件改以固定格式的通知顯示，不再呼叫 LLM。
+- 短時間內的多個事件合併成一次喚醒。
 
 ## 9. 資料儲存
 
@@ -360,21 +441,34 @@ allow_side_effects: []     # 無人值守時允許使用的有副作用工具，
 | 連線設定、Provider 設定、MCP Server 設定 | SQLite |
 | 角色、Routine 定義 | 使用者資料目錄下的 `roles/`、`routines/`（Markdown 檔） |
 | 對話紀錄（含 Routine 產生的對話） | SQLite |
-| Routine 執行紀錄 | SQLite |
+| Routine 與事件提醒的執行紀錄（含送給 LLM 的資料與工具呼叫過程） | SQLite |
+| 事件提醒的平台狀態快照、已提醒過的事件 | SQLite |
 | 平台資料快取 | SQLite（附更新時間，背景定期更新） |
-| 日報告專案對應、每天的日報告內容與手動補充 | SQLite |
+| 日報告專案對應、每天的日報告內容（含草稿／定稿狀態）與手動補充 | SQLite |
 | 個人記憶、知識庫 | SQLite，使用 FTS5 全文搜尋（之後再評估向量搜尋） |
 
 資料庫檔案放在使用者資料目錄（例如 Windows 的 `%APPDATA%\DevColleague\`）。
+
+### 9.1 記憶（F10）
+
+- 每筆記憶包含：類型（偏好、進行中的工作、設計決策、踩坑筆記）、內容、來源（使用者手動新增，或助理在哪一段對話中記下）、
+  建立與更新時間。
+- LLM 透過 `save_memory` 記下、`search_memory` 查詢；使用者可在 UI 查看、修改、刪除所有記憶。
+- 對話、Routine、事件提醒開始時，後端以當次的提示內容做全文搜尋，把相關記憶放進 system prompt；
+  偏好類的記憶數量少，固定全部帶入。
+- 記憶內容同樣不得包含 Token、API Key 等機密。
 
 ## 10. 安全性設計
 
 - 機密資料不以明文寫入資料庫、設定檔或 log。
 - 後端只監聽 `127.0.0.1`，並驗證 session token。
 - 呼叫 CLI 與啟動 MCP Server 時以參數陣列傳遞，不經過 shell 組字串，避免指令注入。
-- 送給外部 LLM 的內容（例如 PR diff、build log）需在 UI 讓使用者知道。
+- 送給外部 LLM 的內容（例如 PR diff、build log）需在 UI 讓使用者知道：手動執行時於送出前顯示；
+  無人值守執行時存入執行紀錄，可事後查看。
 - MCP Server 是第三方程式，新增時需在 UI 提示使用者確認其來源。
-- 有副作用的工具預設需經使用者確認；無人值守的 Routine 只能使用明確允許的有副作用工具。
+- 有副作用的工具預設需經使用者確認；無人值守執行時只開放唯讀、本機寫入與通知，
+  會修改外部狀態的工具需在 Routine 中明確允許，改變自動行為的工具（Routine 管理）一律需使用者確認。
+- 提供給 CLI 的內建工具 MCP Server 只監聽 `127.0.0.1` 並驗證 token。
 - 角色只能使用工具白名單內的工具。
 
 ## 11. 建議的專案結構
@@ -398,9 +492,10 @@ DevColleague/
 │  │  ├─ routines/
 │  │  ├─ scheduler/
 │  │  ├─ tools/
-│  │  │  └─ mcp/
+│  │  │  ├─ mcp/
+│  │  │  └─ mcp_server/
 │  │  └─ storage/
-│  ├─ defaults/              # 內建角色與 Routine 範本，首次啟動時複製到使用者資料目錄（第四階段）
+│  ├─ defaults/              # 內建 Routine 範本（第二階段）與角色範本（第四階段），首次啟動時複製到使用者資料目錄
 │  ├─ scripts/               # PyInstaller 打包腳本
 │  └─ tests/
 └─ CLAUDE.md
