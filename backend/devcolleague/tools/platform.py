@@ -42,6 +42,7 @@ def register_platform_tools(registry: ToolRegistry, activity: ActivityService) -
                 continue
             items.append({
                 "connection": activity.connection_name(pr.connection_id),
+                "connection_id": pr.connection_id,
                 "platform": pr.platform,
                 "id": pr.id,
                 "title": pr.title,
@@ -90,6 +91,10 @@ def register_platform_tools(registry: ToolRegistry, activity: ActivityService) -
             "builds": [
                 {
                     "connection": activity.connection_name(b.connection_id),
+                    "connection_id": b.connection_id,
+                    "id": b.id,
+                    "repo": b.repo,
+                    "platform_project": b.project,
                     "name": b.name,
                     "project": b.project or b.repo,
                     "branch": b.branch,

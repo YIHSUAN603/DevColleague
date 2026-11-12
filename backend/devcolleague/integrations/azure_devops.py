@@ -18,6 +18,7 @@ import httpx
 
 from .base import DEFAULT_TIMEOUT, Integration, IntegrationError, parse_dt
 from .models import Build, Commit, PullRequest, WorkItem, WorkItemProgress
+from .azure_development import AzureDevelopment
 
 API_VERSION = "6.0"
 MAX_PROJECTS = 30
@@ -68,7 +69,7 @@ def _identity_name(value: Any) -> str | None:
     return None
 
 
-class AzureDevOpsIntegration(Integration):
+class AzureDevOpsIntegration(AzureDevelopment, Integration):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         basic = base64.b64encode(f":{self._token}".encode()).decode()

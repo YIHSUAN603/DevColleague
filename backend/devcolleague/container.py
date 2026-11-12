@@ -17,6 +17,7 @@ from .services.daily_report import DailyReportService
 from .services.dashboard import DashboardService
 from .services.events import EventBus, NotificationService
 from .services.summary import SummaryService
+from .services.development import DevelopmentService
 from .services.memory import MemoryService
 from .services.event_monitor import EventMonitor
 from .services.scheduler import Scheduler
@@ -29,6 +30,7 @@ from .storage.secrets import KeyringSecretStore, SecretStore
 from .storage.secrets import connection_token_key, provider_api_key_key
 from .tools.base import ToolRegistry
 from .tools.platform import register_platform_tools
+from .tools.development import register_development_tools
 
 
 @dataclass
@@ -52,6 +54,7 @@ class Container:
     monitor: EventMonitor
     scheduler: Scheduler
     mcp: McpBridge
+    development: DevelopmentService
 
 
 def build_container(
@@ -77,6 +80,8 @@ def build_container(
         return [settings.session_token] + [value for key in keys if (value := secrets.get(key))]
 
     memory = MemoryService(db, known_secrets)
+    development = DevelopmentService(connections, providers, gateway, known_secrets)
+    register_development_tools(tools, development)
     conversations = ConversationService(db, providers, gateway)
     conversations.memory = memory
     daily_report = DailyReportService(db, activity, providers, gateway)
@@ -105,4 +110,5 @@ def build_container(
         notifications=notifications,
         memory=memory, routines=routines, monitor=monitor,
         scheduler=Scheduler(routines, monitor), mcp=mcp,
+        development=development,
     )

@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes import router
 from .api.assistant import router as assistant_router
+from .api.development import router as development_router
 from .container import Container
 
 # Tauri WebView 與 Vite dev server 的來源
@@ -40,6 +41,7 @@ def create_app(container: Container) -> FastAPI:
     )
     app.include_router(router)
     app.include_router(assistant_router)
+    app.include_router(development_router)
     # 使用原始 ASGI route，讓 MCP 位址無須額外的重新導向。
     from starlette.routing import Route
     app.router.routes.append(Route("/mcp", endpoint=container.mcp, methods=["GET", "POST", "DELETE"]))

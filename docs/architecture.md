@@ -192,8 +192,8 @@ ADS/TFS 與 GitHub 的資料轉換為共用模型，上層功能與 UI 不需要
 - `list_work_items`：查詢 Work Item／Issue（已實作）
 - `list_builds`：查詢最近的建置結果（已實作）
 - `list_my_commits`：查詢我最近的 commit（已實作）
-- `get_pull_request_diff`：取得 PR 的變更內容（第三階段，配合 F6／F7 實作）
-- `get_build_log`：取得建置 log（第三階段，配合 F8 實作）
+- `get_pull_request_diff`：取得 PR 本文與變更內容（已實作，F6／F7）
+- `get_build_log`：取得建置 log（已實作，F8）
 
 第二階段另外新增讓 LLM 能「行動」的工具，這些工具不經過 Integration 層（名稱為暫定，以實作為準）：
 
@@ -545,7 +545,22 @@ DevColleague/
 └─ CLAUDE.md
 ```
 
-## 12. 打包與發佈
+## 12. 第三階段開發流程
+
+- `services/local_repo.py` 以參數陣列執行唯讀 Git，限制逾時與輸出大小，停用外部 diff、textconv 與 fsmonitor。
+  分支先解析為 commit，再以共同祖先產生 PR 差異。問答檔案限 Git 追蹤清單，驗證解析後路徑與大小。
+- `integrations/development.py` 定義統一 PR 詳細資料與開發操作介面；GitHub 與 ADS 的 API 轉換分別位於
+  `github_development.py`、`azure_development.py`，上層不接觸平台原始格式。
+- `services/development.py` 收集差異、PR 或 build log，遮蔽已知憑證並建立短效記憶體快照。
+  `/api/development/preview` 回傳資料，使用者檢查後再以快照 ID 呼叫 `/generate`，經既有 Gateway 串流分析。
+  自訂審查規範與問題一併放入快照。CLI 工作目錄需明確授權，否則使用空暫存目錄。
+- `/publish` 只接受經 session 驗證、明確確認的前端請求，建立 PR 或發布一般留言；不註冊為 LLM 工具。
+  頁面顯示目標、分支／PR 編號與完整內容供確認；結果可先編輯及複製。
+- 對話、Routine 與 CLI MCP 共用 `get_pull_request_diff`、`get_build_log` 唯讀工具，沿用既有工具輸出與稽核機制；
+  平台清單工具一併回傳連線、PR／Build ID 及 Repo 供後續查詢。
+- 資料上限、API 參考與驗收狀態見 [第三階段驗證紀錄](verification-phase3.md)。
+
+## 13. 打包與發佈
 
 1. 使用 PyInstaller 把後端打包成單一執行檔（`backend/scripts/build_sidecar.py`），
    輸出為 `app/src-tauri/binaries/devcolleague-backend-<target triple>.exe`。

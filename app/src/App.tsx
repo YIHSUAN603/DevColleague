@@ -8,15 +8,17 @@ import { SettingsPage } from './pages/SettingsPage'
 import { SummaryPage } from './pages/SummaryPage'
 import { MemoryPage } from './pages/MemoryPage'
 import { RoutinesPage } from './pages/RoutinesPage'
+import { DevelopmentPage } from './pages/DevelopmentPage'
 import { errorMessage } from './utils'
 
-type Page = 'dashboard' | 'chat' | 'summary' | 'daily' | 'settings' | 'routines' | 'memory'
+type Page = 'dashboard' | 'chat' | 'summary' | 'daily' | 'settings' | 'routines' | 'memory' | 'development'
 
 const NAV: { id: Page; label: string; icon: string }[] = [
   { id: 'dashboard', label: '儀表板', icon: '▦' },
   { id: 'chat', label: 'AI 對話', icon: '✦' },
   { id: 'summary', label: '工作摘要', icon: '☰' },
   { id: 'daily', label: '日報告', icon: '✎' },
+  { id: 'development', label: '開發助手', icon: '⌘' },
   { id: 'routines', label: '背景助理', icon: '◷' },
   { id: 'memory', label: '個人記憶', icon: '◇' },
   { id: 'settings', label: '設定', icon: '⚙' },
@@ -79,6 +81,7 @@ export default function App() {
         {page === 'dashboard' && <DashboardPage onOpenSettings={() => setPage('settings')} />}
         {page === 'summary' && <SummaryPage />}
         {page === 'daily' && <DailyReportPage />}
+        {page === 'development' && <DevelopmentPage />}
         {page === 'settings' && <SettingsPage />}
         {page === 'memory' && <MemoryPage />}
         {page === 'routines' && <RoutinesPage onOpenConversation={(id) => {

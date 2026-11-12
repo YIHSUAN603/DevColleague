@@ -9,6 +9,7 @@ from datetime import datetime
 import httpx
 
 from .models import Build, Commit, PullRequest, WorkItem, WorkItemProgress
+from .development import DevelopmentIntegration
 
 DEFAULT_TIMEOUT = httpx.Timeout(20.0, connect=10.0)
 
@@ -27,7 +28,7 @@ class ConnectionInfo:
     scopes: list[str] = field(default_factory=list)
 
 
-class Integration(ABC):
+class Integration(DevelopmentIntegration, ABC):
     def __init__(
         self,
         info: ConnectionInfo,

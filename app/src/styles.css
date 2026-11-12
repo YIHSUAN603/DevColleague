@@ -170,3 +170,9 @@ label.inline { display: inline-flex; flex-direction: row; align-items: center; g
 .mapping-row { display: flex; gap: 8px; align-items: center; }
 .mapping-row input, .mapping-row select { flex: 1; min-width: 0; }
 .memory-content { white-space: pre-wrap; overflow-wrap: anywhere; }
+.development-form { display: grid; gap: 16px; min-width: 0; }
+.development-root { flex: 1; min-width: 220px; }
+.development-result { overflow-wrap: anywhere; }
+.development-result textarea, .development-form textarea { width: 100%; }
+.development-form select[multiple] { width: 100%; max-width: 100%; }
+.development-result pre, .disclosure pre { max-height: 440px; overflow: auto; }

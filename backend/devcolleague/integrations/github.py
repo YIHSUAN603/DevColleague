@@ -14,6 +14,7 @@ import httpx
 
 from .base import DEFAULT_TIMEOUT, Integration, IntegrationError, parse_dt
 from .models import Build, Commit, PullRequest, WorkItem
+from .github_development import GitHubDevelopment
 
 DEFAULT_BASE_URL = "https://api.github.com"
 AUTO_REPO_COUNT = 5
@@ -40,7 +41,7 @@ def _day(dt: datetime) -> str:
     return dt.date().isoformat()
 
 
-class GitHubIntegration(Integration):
+class GitHubIntegration(GitHubDevelopment, Integration):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._client = httpx.AsyncClient(
